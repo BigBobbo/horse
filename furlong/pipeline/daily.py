@@ -268,19 +268,20 @@ def _persist(conn: sqlite3.Connection, date: str, suggestions: list[Suggestion],
     for suggestion, plan in zip(suggestions, plans):
         conn.execute(
             """INSERT INTO suggestions (date, race_id, runner_id, model_prob, blend_prob,
-                   fair_odds, advised_odds, price_floor, venue, bookmaker, ev,
-                   stake_units, status, created_ts)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                   market_prob, fair_odds, advised_odds, price_floor, venue, bookmaker,
+                   ev, stake_units, status, created_ts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                ON CONFLICT(date, runner_id) DO UPDATE SET
                    model_prob=excluded.model_prob, blend_prob=excluded.blend_prob,
+                   market_prob=excluded.market_prob,
                    fair_odds=excluded.fair_odds, advised_odds=excluded.advised_odds,
                    price_floor=excluded.price_floor, venue=excluded.venue,
                    bookmaker=excluded.bookmaker, ev=excluded.ev,
                    stake_units=excluded.stake_units""",
             (date, suggestion.race_id, suggestion.runner_id, suggestion.model_prob,
-             suggestion.blend_prob, suggestion.fair_odds, suggestion.advised_odds,
-             suggestion.price_floor, suggestion.venue, suggestion.bookmaker,
-             suggestion.ev, plan.stake_units, now),
+             suggestion.blend_prob, suggestion.market_prob, suggestion.fair_odds,
+             suggestion.advised_odds, suggestion.price_floor, suggestion.venue,
+             suggestion.bookmaker, suggestion.ev, plan.stake_units, now),
         )
 
 

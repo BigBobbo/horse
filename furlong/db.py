@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS suggestions (
     runner_id INTEGER NOT NULL REFERENCES runners(id),
     model_prob REAL NOT NULL,
     blend_prob REAL NOT NULL,
+    market_prob REAL,
     fair_odds REAL NOT NULL,
     advised_odds REAL NOT NULL,
     price_floor REAL NOT NULL,
@@ -143,12 +144,27 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the initial schema, applied to existing databases.
+MIGRATIONS: list[tuple[str, str, str]] = [
+    ("suggestions", "market_prob", "ALTER TABLE suggestions ADD COLUMN market_prob REAL"),
+]
+
+
 def init_db(db_path: str | Path) -> sqlite3.Connection:
-    """Create the schema (idempotent) and return an open connection."""
+    """Create the schema (idempotent), apply migrations, return a connection."""
     conn = connect(db_path)
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns missing from databases created by an earlier version."""
+    for table, column, statement in MIGRATIONS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(statement)
 
 
 def table_names(conn: sqlite3.Connection) -> set[str]:

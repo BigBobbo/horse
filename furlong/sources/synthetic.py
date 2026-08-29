@@ -354,3 +354,81 @@ class SyntheticSource:
     def sync_daily(self, settings: Settings, conn: sqlite3.Connection, date: str) -> None:
         # Nothing to fetch: `furlong generate` has already populated the DB.
         return None
+
+
+def resolve_open_card(settings: Settings, seed: int = 1234) -> dict:
+    """Run the open card: sample results and publish Betfair SP.
+
+    The generator stores each runner's true win probability, so the open
+    card can be resolved later without regenerating the world. This is what
+    lets the demo complete the full loop -- publish suggestions in the
+    morning, run the races, settle against BSP, and report closing line
+    value.
+
+    BSP is formed the same way as in the main generator: mostly the
+    public's opinion (recoverable from the morning exchange price) with a
+    dose of truth for the late, sharper money, and no margin.
+    """
+    conn = init_db(settings.database_path)
+    rng = np.random.default_rng(seed)
+
+    races = conn.execute(
+        "SELECT id, field_size FROM races WHERE status = 'scheduled' ORDER BY id"
+    ).fetchall()
+    resolved = 0
+
+    for race in races:
+        runners = conn.execute(
+            """SELECT r.id AS runner_id, t.true_prob AS true_prob,
+                      (SELECT o.odds_decimal FROM odds_snapshots o
+                       WHERE o.runner_id = r.id AND o.venue = 'exchange'
+                       ORDER BY o.ts_utc DESC LIMIT 1) AS morning_odds
+               FROM runners r
+               LEFT JOIN synthetic_truth t ON t.runner_id = r.id
+               WHERE r.race_id = ? AND r.status != 'nonrunner'""",
+            (race["id"],),
+        ).fetchall()
+        if not runners or any(r["true_prob"] is None for r in runners):
+            continue
+
+        true_prob = np.array([r["true_prob"] for r in runners], dtype=float)
+        true_prob = true_prob / true_prob.sum()
+        n = len(runners)
+
+        order = _plackett_luce_order(rng, true_prob)
+        finish_pos = np.empty(n, dtype=int)
+        finish_pos[order] = np.arange(1, n + 1)
+        beaten = np.maximum(0.0, (finish_pos - 1) * 1.8 + rng.normal(0, 0.6, n))
+        beaten[finish_pos == 1] = 0.0
+
+        morning = np.array(
+            [r["morning_odds"] if r["morning_odds"] else float(n) for r in runners],
+            dtype=float,
+        )
+        public_prob = (1.0 / morning) / (1.0 / morning).sum()
+        bsp_strength = (
+            BSP_TRUTH_WEIGHT * np.log(np.clip(true_prob, 1e-9, None))
+            + (1 - BSP_TRUTH_WEIGHT) * np.log(np.clip(public_prob, 1e-9, None))
+            + rng.normal(0, BSP_NOISE, n)
+        )
+        bsp_prob = _softmax(bsp_strength)
+
+        for k, runner in enumerate(runners):
+            conn.execute(
+                """UPDATE runners SET status='ran', finish_pos=?, beaten_lengths=?,
+                   win_flag=? WHERE id=?""",
+                (int(finish_pos[k]), float(beaten[k]), int(finish_pos[k] == 1),
+                 runner["runner_id"]),
+            )
+            repo.upsert_bsp(
+                conn, runner["runner_id"], "win",
+                bsp=_to_odds(float(bsp_prob[k])),
+                ppwap=_to_odds(float(bsp_prob[k])),
+                morning_wap=float(morning[k]),
+            )
+        conn.execute("UPDATE races SET status='result' WHERE id=?", (race["id"],))
+        resolved += 1
+
+    conn.commit()
+    conn.close()
+    return {"races_resolved": resolved}

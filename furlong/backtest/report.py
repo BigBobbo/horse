@@ -18,6 +18,24 @@ import pandas as pd
 
 from furlong.backtest.engine import BacktestResult
 
+# A profit figure cannot be called significant on a handful of bets, and a
+# run of identical outcomes (five losers, say) has zero sample variance --
+# which would otherwise make any ROI look infinitely significant. The
+# research is blunt about the real requirement: proving a 4% edge at odds
+# around 5.0 needs 7,000+ bets. This threshold is only a floor below which
+# the question is not worth asking.
+MIN_BETS_FOR_SIGNIFICANCE = 100
+
+
+def is_significant(roi: float, standard_error: float, n_bets: int) -> bool:
+    """Two-standard-error test, with sample-size and zero-variance guards."""
+    if n_bets < MIN_BETS_FOR_SIGNIFICANCE:
+        return False
+    if not standard_error > 0 or standard_error != standard_error:  # 0 or NaN
+        return False
+    return abs(roi) > 2 * standard_error
+
+
 
 def compute_metrics(result: BacktestResult) -> dict:
     bets = result.bets
@@ -54,7 +72,7 @@ def compute_metrics(result: BacktestResult) -> dict:
         "roi": roi,
         "flat_stake_roi": flat_roi,
         "flat_stake_roi_se": flat_se,
-        "roi_is_significant": bool(abs(flat_roi) > 2 * flat_se) if flat_se == flat_se else False,
+        "roi_is_significant": is_significant(flat_roi, flat_se, len(bets)),
         "naive_back_all_roi": result.naive_roi(),
         "edge_over_naive": flat_roi - result.naive_roi(),
         "max_drawdown_units": float(drawdown.max()),

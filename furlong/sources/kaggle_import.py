@@ -62,14 +62,31 @@ RUNNER_COLUMNS = {
     "official_rating": ["OR", "or", "officialRating"],
     "rpr": ["RPR", "rpr"],
     "topspeed": ["TR", "tr", "topspeed"],
-    "weight_lbs": ["weight", "weightLb", "lbs"],
-    "beaten": ["positionL", "dist", "btn", "beaten"],
+    # weightLb is pounds; the bare "weight" column in this dataset is
+    # kilograms, so it must never be the first choice.
+    "weight_lbs": ["weightLb", "lbs", "weight_lbs"],
+    "weight_kg": ["weight"],
+    # "dist" is lengths behind the winner; "positionL" is lengths behind the
+    # horse in front, which is a different quantity.
+    "beaten": ["dist", "btn", "beaten", "positionL"],
+    "res_win": ["res_win", "resWin"],
 }
 
 # The dataset's decimalPrice column is a fractional *probability* in some
 # vintages (0.25 meaning 4.0) and a decimal price in others. Values below 1.0
 # can only be the former.
 PROB_LIKE_THRESHOLD = 1.0
+
+# The dataset encodes a non-finisher as position 40, not as a blank. Treating
+# that as a real finishing position would hand every faller and pulled-up
+# horse a normalised performance score and feed it into form and Elo.
+DNF_POSITION = 40
+
+# Course names carry the country in brackets -- "Curragh (IRE)", "Ascot" for
+# Britain, and the "(AW)" suffix for all-weather tracks. Left in place, the
+# same course would fragment into several identities.
+COURSE_SUFFIX = re.compile(r"\s*\((IRE|GB|UK|AW|FR|GER|USA|SAF|UAE|AUS)\)\s*",
+                           re.IGNORECASE)
 
 
 @dataclass
@@ -129,13 +146,35 @@ def _iso_date(raw: str | None) -> str | None:
 
 
 def _position(raw) -> int | None:
-    """Finishing position, or None for a non-finisher (PU, F, UR, BD, RO...)."""
+    """Finishing position, or None for a non-finisher.
+
+    Non-finishers appear either as a letter code (PU pulled up, F fell, UR
+    unseated, BD brought down, RO ran out) or, in this dataset specifically,
+    as the sentinel position 40.
+    """
     if raw is None:
         return None
     text = str(raw).strip().upper()
     if not text or not text.isdigit():
         return None
-    return int(text)
+    position = int(text)
+    if position >= DNF_POSITION:
+        return None
+    return position
+
+
+def _course_and_country(raw: str | None) -> tuple[str, str | None]:
+    """Split "Curragh (IRE)" into a clean course name and its country."""
+    text = (raw or "").strip()
+    country = None
+    for match in COURSE_SUFFIX.finditer(text):
+        code = match.group(1).upper()
+        if code in ("IRE",):
+            country = "IRE"
+        elif code in ("GB", "UK"):
+            country = "GB"
+    cleaned = COURSE_SUFFIX.sub(" ", text).strip()
+    return cleaned, country
 
 
 def _odds(raw) -> float | None:
@@ -243,7 +282,7 @@ def _import_pair(conn, races_path: Path, horses_path: Path,
 
             race_id = (race_col("race_id") or "").strip()
             date = _iso_date(race_col("date"))
-            course = (race_col("course") or "").strip()
+            course, course_country = _course_and_country(race_col("course"))
             runners = by_race.get(race_id, [])
 
             if not race_id or not date or not course or len(runners) < 2:
@@ -255,7 +294,7 @@ def _import_pair(conn, races_path: Path, horses_path: Path,
                 continue
 
             off = (race_col("time") or "12:00").strip()[:5]
-            country = _country(race_col("country"), course)
+            country = course_country or _country(race_col("country"), course)
             distance = _num(race_col("distance")) or 0.0
             race_type = _norm_race_type(
                 f"{race_col('title') or ''} {race_col('hurdles') or ''}"
@@ -286,18 +325,27 @@ def _import_pair(conn, races_path: Path, horses_path: Path,
                     result.skipped += 1
                     continue
                 position = _position(col("position"))
+                explicit_win = _num(col("res_win"))
+                won = (
+                    int(explicit_win == 1) if explicit_win is not None
+                    else (int(position == 1) if position is not None else None)
+                )
+                weight_lbs = _num(col("weight_lbs"))
+                if weight_lbs is None:
+                    kilos = _num(col("weight_kg"))
+                    weight_lbs = kilos * 2.20462 if kilos else None
                 runner_db_id = repo.upsert_runner(conn, db_race_id, RunnerRecord(
                     horse=horse,
                     trainer=(col("trainer") or "").strip() or None,
                     jockey=(col("jockey") or "").strip() or None,
                     draw=_int(col("draw")),
-                    weight_lbs=_num(col("weight_lbs")),
+                    weight_lbs=weight_lbs,
                     official_rating=_num(col("official_rating")),
                     age=_int(col("age")),
                     status="ran" if position is not None else "nonrunner",
                     finish_pos=position,
                     beaten_lengths=_num(col("beaten")),
-                    win_flag=int(position == 1) if position is not None else None,
+                    win_flag=won if position is not None else None,
                 ))
                 result.runners += 1
 

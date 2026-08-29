@@ -16,20 +16,24 @@ from furlong.sources.kaggle_import import (
     inspect,
 )
 
+# Columns and conventions follow the dataset's own published specification:
+# course carries the country in brackets, decimalPrice is 1/decimal odds,
+# position 40 means the horse did not finish, weightLb is pounds while the
+# bare weight column is kilograms, and dist is lengths behind the winner.
 RACES = """rid,course,date,time,metric,condition,rclass,countryCode,title,hurdles,runners
-101,Curragh,2015-05-01,14:30,1600,Good,3,IRE,Handicap,,3
+101,Curragh (IRE),2015-05-01,14:30,1600,Good,3,IRE,Handicap,,3
 102,Ascot,2015-05-02,15:05,2400,Good To Firm,2,GB,Novices Hurdle,hurdle,3
-103,Leopardstown,2015-05-03,16:00,2000,Soft,4,IRE,Maiden,,1
+103,Leopardstown (IRE),2015-05-03,16:00,2000,Soft,4,IRE,Maiden,,1
 """
 
-HORSES = """rid,horseName,age,saddle,decimalPrice,trainerName,jockeyName,position,weight,RPR,TR,OR,positionL
-101,Harp Melody,5,4,0.25,W P Mullins,P Townend,1,140,105,98,95,0
-101,Liffey Runner,4,1,0.20,A P O'Brien,R Moore,2,138,102,95,92,1.5
-101,Shannon Mist,6,2,0.10,J Harrington,S Foley,PU,136,,,84,
-102,English Rose,4,3,0.50,J Gosden,F Dettori,1,142,110,101,101,0
-102,Windsor Lad,5,2,0.125,M Johnston,J Doyle,2,140,104,97,96,2.0
-102,Berkshire Boy,6,1,0.05,N Henderson,N de Boinville,3,138,99,93,90,6.0
-103,Lone Runner,4,1,0.90,D Weld,C O'Donoghue,1,140,100,95,90,0
+HORSES = """rid,horseName,age,saddle,decimalPrice,trainerName,jockeyName,position,weightLb,weight,RPR,TR,OR,dist,positionL,res_win
+101,Harp Melody,5,4,0.25,W P Mullins,P Townend,1,140,63.5,105,98,95,0,0,1
+101,Liffey Runner,4,1,0.20,A P O'Brien,R Moore,2,138,62.6,102,95,92,1.5,1.5,0
+101,Shannon Mist,6,2,0.10,J Harrington,S Foley,40,136,61.7,,,84,,,0
+102,English Rose,4,3,0.50,J Gosden,F Dettori,1,142,64.4,110,101,101,0,0,1
+102,Windsor Lad,5,2,0.125,M Johnston,J Doyle,2,140,63.5,104,97,96,2.0,2.0,0
+102,Berkshire Boy,6,1,0.05,N Henderson,N de Boinville,3,138,62.6,99,93,90,6.0,4.0,0
+103,Lone Runner,4,1,0.90,D Weld,C O'Donoghue,1,140,63.5,100,95,90,0,0,1
 """
 
 
@@ -48,6 +52,10 @@ def test_position_parses_only_finishers():
     # non-finishers: pulled up, fell, unseated, brought down, refused
     for code in ("PU", "F", "UR", "BD", "RO", "", None):
         assert _position(code) is None
+    # this dataset encodes a non-finisher as the sentinel position 40
+    assert _position("40") is None
+    assert _position("41") is None
+    assert _position("39") == 39
 
 
 def test_odds_accepts_both_vintages():
@@ -106,7 +114,9 @@ def test_import_joins_races_to_runners(settings, dataset_dir):
     conn.close()
 
     curragh, ascot = rows
+    # the "(IRE)" suffix must be stripped, or one course becomes two
     assert curragh["course"] == "Curragh" and curragh["country"] == "IRE"
+    assert ascot["course"] == "Ascot"
     assert curragh["going"] == "good" and curragh["race_type"] == "flat"
     assert curragh["distance_m"] == 1600
     assert curragh["field_size"] == 3
@@ -129,7 +139,7 @@ def test_import_maps_results_and_non_finishers(settings, dataset_dir):
     assert by_name["Harp Melody"]["official_rating"] == 95
     assert by_name["Harp Melody"]["draw"] == 4
     assert by_name["Liffey Runner"]["finish_pos"] == 2
-    # pulled up: no finishing position, so not a completed run
+    # position 40 is the dataset's "did not finish" sentinel, not 40th place
     assert by_name["Shannon Mist"]["status"] == "nonrunner"
     assert by_name["Shannon Mist"]["finish_pos"] is None
 
@@ -183,3 +193,49 @@ def test_imported_data_flows_into_features(settings, dataset_dir):
     # two races survive, each with one winner among the runners that completed
     assert set(dataset.frame["race_id"].unique()).__len__() == 2
     assert dataset.frame.groupby("race_id")["win_flag"].sum().eq(1).all()
+
+
+# -- conventions from the dataset's published specification -----------------
+
+def test_course_brackets_are_stripped_and_give_the_country():
+    from furlong.sources.kaggle_import import _course_and_country
+
+    assert _course_and_country("Curragh (IRE)") == ("Curragh", "IRE")
+    assert _course_and_country("Ascot") == ("Ascot", None)
+    # all-weather is a surface marker, not a country
+    assert _course_and_country("Southwell (AW)") == ("Southwell", None)
+    assert _course_and_country("  Naas (IRE) ") == ("Naas", "IRE")
+
+
+def test_country_comes_from_the_course_suffix(settings, dataset_dir):
+    """Courses are the same track whether or not the file tags the country."""
+    import_kaggle_dataset(settings, dataset_dir)
+    conn = init_db(settings.database_path)
+    courses = {r["name"]: r["country"] for r in
+               conn.execute("SELECT name, country FROM courses")}
+    conn.close()
+    assert courses == {"Curragh": "IRE", "Ascot": "GB"}
+
+
+def test_weight_prefers_pounds_over_kilograms(settings, dataset_dir):
+    """weightLb is pounds; the bare weight column is kilograms."""
+    import_kaggle_dataset(settings, dataset_dir)
+    conn = init_db(settings.database_path)
+    row = conn.execute(
+        """SELECT r.weight_lbs FROM runners r JOIN horses h ON h.id = r.horse_id
+           WHERE h.name = 'Harp Melody'"""
+    ).fetchone()
+    conn.close()
+    assert row["weight_lbs"] == pytest.approx(140.0)  # not 63.5 kg
+
+
+def test_beaten_lengths_measured_from_the_winner(settings, dataset_dir):
+    """"dist" is lengths behind the winner; "positionL" is behind the horse in front."""
+    import_kaggle_dataset(settings, dataset_dir)
+    conn = init_db(settings.database_path)
+    row = conn.execute(
+        """SELECT r.beaten_lengths FROM runners r JOIN horses h ON h.id = r.horse_id
+           WHERE h.name = 'Berkshire Boy'"""
+    ).fetchone()
+    conn.close()
+    assert row["beaten_lengths"] == pytest.approx(6.0)  # not 4.0 from positionL

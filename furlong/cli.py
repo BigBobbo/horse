@@ -39,6 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="CSV file")
     p.add_argument("--mapping", help="JSON column-mapping file (see docs/OPERATIONS.md)")
 
+    p = sub.add_parser("import-kaggle",
+                       help="Import the Kaggle UK+IRE dataset (races_YYYY/horses_YYYY)")
+    p.add_argument("directory", help="directory containing the extracted CSV files")
+    p.add_argument("--inspect", action="store_true",
+                   help="report detected files and columns without importing")
+    p.add_argument("--years", nargs="*", help="only these years (e.g. 2015 2016)")
+
     p = sub.add_parser("train", help="Train models and fit the market blend")
     p.add_argument("--model", choices=["gbm", "logit"], default="gbm")
 
@@ -124,6 +131,38 @@ def main(argv: list[str] | None = None) -> int:
             f"{result.skipped} rows skipped"
         )
         return 0
+
+    if args.command == "import-kaggle":
+        from furlong.sources.kaggle_import import import_kaggle_dataset, inspect
+
+        if args.inspect:
+            report = inspect(args.directory)
+            if not report["pairs"]:
+                print(f"No races_YYYY/horses_YYYY pairs found under {args.directory}",
+                      file=sys.stderr)
+                return 1
+            print(f"Found {report['pairs']} file pair(s): "
+                  f"{', '.join(report['years'][:6])}"
+                  f"{' ...' if len(report['years']) > 6 else ''}")
+            for section in ("races", "runners"):
+                info = report[section]
+                print(f"\n{section} ({info['file']})")
+                print(f"  columns found: {', '.join(info['columns'][:20])}")
+                print("  mapped:")
+                for field_name, column in sorted(info["mapped"].items()):
+                    print(f"    {field_name:18} <- {column}")
+                missing = set(
+                    {"races": ("race_id", "course", "date"),
+                     "runners": ("race_id", "horse", "position")}[section]
+                ) - set(info["mapped"])
+                if missing:
+                    print(f"  MISSING (import will fail): {', '.join(sorted(missing))}")
+            return 0
+
+        result = import_kaggle_dataset(settings, args.directory,
+                                       years=tuple(args.years) if args.years else None)
+        print(result.summary())
+        return 0 if result.races else 1
 
     if args.command == "train":
         from furlong.modeling.train import train_and_evaluate

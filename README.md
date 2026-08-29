@@ -116,7 +116,8 @@ significant on a small sample.
 | `furlong demo` | The whole pipeline end to end on synthetic data |
 | `furlong init-db` | Create the SQLite schema |
 | `furlong generate` | Build a synthetic racing world |
-| `furlong import-csv <file>` | Import historic results (rpscrape/Kaggle-style) |
+| `furlong import-csv <file>` | Import historic results from a mapped CSV |
+| `furlong import-kaggle <dir>` | Import the Kaggle UK+IRE dataset (`--inspect` first) |
 | `furlong ingest-bsp <files>` | Ingest Betfair SP archives (free, GB+IRE from 2008) |
 | `furlong train` | Fit the model and the market blend |
 | `furlong backtest` | Walk-forward backtest, JSON + HTML report |
@@ -138,10 +139,20 @@ export FURLONG_RACING_API_PASSWORD=...
 furlong daily
 ```
 
-The recommended starting stack is The Racing API (from about £25/month for
-UK+IRE racecards, results and 20+ bookmakers' odds) plus Betfair's free BSP
-archives. [`docs/OPERATIONS.md`](docs/OPERATIONS.md) has the daily schedule,
-the alternatives and the real costs.
+To answer the only question that matters first — does the model find edge on
+real racing? — start free: the Kaggle UK+IRE dataset (1990–2020, CC BY-NC, so
+personal use is licensed) gives thirty years of form in one download.
+
+```bash
+furlong import-kaggle ~/kaggle-racing --inspect
+furlong import-kaggle ~/kaggle-racing
+furlong backtest
+```
+
+For running daily against live racing, the stack is The Racing API (from
+about £25/month for UK+IRE racecards, results and 20+ bookmakers' odds) plus
+Betfair's free BSP archives. [`docs/OPERATIONS.md`](docs/OPERATIONS.md) has
+the daily schedule, the alternatives and the real costs.
 
 ## Before betting real money
 

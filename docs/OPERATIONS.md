@@ -107,7 +107,39 @@ Betfair geo-blocks some regions; if the download returns a non-200 the
 command says so and continues. Download the files in a browser and pass the
 paths directly.
 
-### Option C — your own historic results
+### Option C — the Kaggle UK+IRE dataset (free, and licensed for personal use)
+
+The fastest honest route to a real backtest, and the one to start with.
+[kaggle.com/datasets/hwaitt/horse-racing](https://www.kaggle.com/datasets/hwaitt/horse-racing)
+is 759 MB of UK and Irish racing from 1990 to 2020 — results, Racing Post
+Ratings, Topspeed, official ratings and Oddschecker odds — released under
+**CC BY-NC 4.0**. Non-commercial use is *granted*, which makes it the clean
+choice for a personal model: unlike scraping, you are not relying on nobody
+enforcing a terms-of-use clause. The same licence is why it can never
+underpin anything you sell. (`docs/research/open-source-and-community.md`)
+
+It ends in 2020. That does not matter for the question it answers — whether
+the method finds any edge at all — which is a question about the method, not
+about this season's horses.
+
+```bash
+# a Kaggle login is required to download; extract the archive first
+furlong import-kaggle ~/kaggle-racing --inspect   # check the column mapping
+furlong import-kaggle ~/kaggle-racing             # import every year
+furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017
+```
+
+The dataset ships one pair of files per year (`races_YYYY.csv` and
+`horses_YYYY.csv`, joined on the race id) and its column names have changed
+between vintages, so every field is resolved through a list of candidate
+names. **Always run `--inspect` first**: it prints what was detected and
+names any required field it could not find.
+
+Prices import as starting prices under the bookmaker name `SP`. That is a
+closing line, so a backtest on this data measures the model against the
+market's final word — the right benchmark, and a demanding one.
+
+### Option D — your own historic results
 
 Any results CSV can be imported with a column mapping (rpscrape-style
 exports and the Kaggle UK/IRE datasets both work):

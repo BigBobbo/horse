@@ -67,14 +67,20 @@ Backtest over 3 fold(s): 3,865 bets, 646 winners (16.7%)
 
 [4/6] Publishing suggestions for the open card
   Race                Runner        Model    Mkt   Price   Floor    Edge  Stake  Venue
-  Newmarket 13:35     Horse 0442    27.4%  22.4%    4.63    3.84  +26.7%   1.84  GreenBook
-  Curragh 18:30       Horse 0108    10.4%   8.6%   11.49   10.29  +17.2%   0.42  exchange
+  Newmarket 13:35     Horse 0442    28.7%  22.4%    4.63    3.66  +32.8%   2.00  GreenBook
+  Curragh 18:30       Horse 0108    11.4%   8.6%   11.49    9.40  +28.3%   0.69  exchange
+  Newmarket 14:10     Horse 0170     6.6%   4.2%   18.68   15.88  +23.5%   0.33  HarpBet
   ...
-  8 suggestion(s), 4.08 units staked (1 unit = 1% of bankroll).
+  9 suggestion(s), 5.11 units staked (1 unit = 1% of bankroll).
 
 [5/6] Running the races and settling
-  Settled 8 suggestion(s): 2 won, 6 lost · P/L +2.15u · mean CLV 1.062
+  Settled 9 suggestion(s): 2 won, 7 lost · P/L +5.86u · mean CLV 1.039
 ```
+
+Nine bets settling at +5.86 units means nothing on its own — that is what
+"mean CLV 1.039" is there for. The bets beat the closing price by about 4%
+on average, which is the part that would still be true if the results had
+gone the other way.
 
 ## How it works
 

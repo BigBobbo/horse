@@ -36,15 +36,20 @@ def test_different_seed_differs(tmp_path):
 
 
 def test_world_statistical_properties(world_conn):
-    # exactly one winner per race
+    # exactly one winner in every race that has been run (the final card is
+    # left open by design, with declared runners and no result)
     winners = pd.read_sql_query(
-        "SELECT race_id, SUM(win_flag) w FROM runners GROUP BY race_id", world_conn
+        """SELECT r.race_id, SUM(r.win_flag) w FROM runners r
+           JOIN races ra ON ra.id = r.race_id
+           WHERE ra.status = 'result' GROUP BY r.race_id""",
+        world_conn,
     )
     assert (winners["w"] == 1).all()
 
     odds = pd.read_sql_query(
         """SELECT o.runner_id, o.venue, o.bookmaker, o.odds_decimal, r.race_id, r.win_flag
-           FROM odds_snapshots o JOIN runners r ON r.id = o.runner_id""",
+           FROM odds_snapshots o JOIN runners r ON r.id = o.runner_id
+           JOIN races ra ON ra.id = r.race_id WHERE ra.status = 'result'""",
         world_conn,
     )
     odds["imp"] = 1.0 / odds["odds_decimal"]

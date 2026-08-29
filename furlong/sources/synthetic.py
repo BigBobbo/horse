@@ -112,11 +112,17 @@ def _plackett_luce_order(rng: np.random.Generator, probs: np.ndarray) -> np.ndar
 
 
 def generate_world(settings: Settings, seasons: int = 3, seed: int = 42,
-                   n_horses: int = 600, days: int | None = None) -> dict:
+                   n_horses: int = 600, days: int | None = None,
+                   open_last_day: bool = True) -> dict:
     """Generate racing into the configured database.
 
     ``days`` overrides ``seasons`` with an explicit number of calendar days
     (used by fast tests); the default is ``seasons * 364``.
+
+    With ``open_last_day`` the final calendar day is written as an *open*
+    card: runners are declared, bookmakers and the morning exchange have
+    priced it, but it has not been run -- no finishing positions and no
+    Betfair SP. That is the state the daily pipeline actually operates on.
     """
     conn = init_db(settings.database_path)
     rng = np.random.default_rng(seed)
@@ -151,6 +157,7 @@ def generate_world(settings: Settings, seasons: int = 3, seed: int = 42,
 
     for day in range(total_days):
         current = start + timedelta(days=day)
+        is_open_card = open_last_day and day == total_days - 1
         weekday = current.weekday()
         season_pos = (day % 364) / 364.0  # 0 = early January
 
@@ -285,7 +292,7 @@ def generate_world(settings: Settings, seasons: int = 3, seed: int = 42,
                     going=going,
                     race_class=race_class,
                     field_size=field_size,
-                    status="result",
+                    status="scheduled" if is_open_card else "result",
                 ))
                 races_written += 1
 
@@ -296,10 +303,10 @@ def generate_world(settings: Settings, seasons: int = 3, seed: int = 42,
                         jockey=f"Jockey {int(jockeys_for_field[k]):03d}",
                         draw=int(draw[k]) if race_type == "flat" else None,
                         age=None,
-                        status="ran",
-                        finish_pos=int(finish_pos[k]),
-                        beaten_lengths=float(beaten[k]),
-                        win_flag=int(finish_pos[k] == 1),
+                        status="declared" if is_open_card else "ran",
+                        finish_pos=None if is_open_card else int(finish_pos[k]),
+                        beaten_lengths=None if is_open_card else float(beaten[k]),
+                        win_flag=None if is_open_card else int(finish_pos[k] == 1),
                     ))
                     runners_written += 1
                     for book in BOOKMAKERS:
@@ -311,18 +318,24 @@ def generate_world(settings: Settings, seasons: int = 3, seed: int = 42,
                         conn, runner_id, "exchange", morning_ts,
                         _to_odds(float(mx_prob[k])),
                     )
-                    repo.upsert_bsp(
-                        conn, runner_id, "win",
-                        bsp=_to_odds(float(bsp_prob[k])),
-                        ppwap=_to_odds(float(bsp_prob[k])),
-                        morning_wap=_to_odds(float(mx_prob[k])),
-                    )
+                    if not is_open_card:
+                        # Betfair SP only exists after the off.
+                        repo.upsert_bsp(
+                            conn, runner_id, "win",
+                            bsp=_to_odds(float(bsp_prob[k])),
+                            ppwap=_to_odds(float(bsp_prob[k])),
+                            morning_wap=_to_odds(float(mx_prob[k])),
+                        )
                     repo.set_synthetic_truth(conn, runner_id, float(true_prob[k]))
 
                 # -- post-race state updates -----------------------------
                 for k, h in enumerate(field):
-                    h.form = 0.7 * h.form + float(rng.normal(0, 0.4))
+                    # Mark the engagement either way: a horse declared on the
+                    # open card must not be drawn into another race that day.
                     h.last_run_day = day
+                    if is_open_card:
+                        continue  # no result yet, so form and won_last stand
+                    h.form = 0.7 * h.form + float(rng.normal(0, 0.4))
                     h.won_last = finish_pos[k] == 1
 
         if day % 28 == 0:

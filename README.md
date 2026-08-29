@@ -139,15 +139,21 @@ export FURLONG_RACING_API_PASSWORD=...
 furlong daily
 ```
 
-To answer the only question that matters first — does the model find edge on
-real racing? — start free: the Kaggle UK+IRE dataset (1990–2020, CC BY-NC, so
-personal use is licensed) gives thirty years of form in one download.
+Screen the method first, for free: the Kaggle UK+IRE dataset (1990–2020,
+CC BY-NC, so personal use is licensed) is thirty years of form in one
+download.
 
 ```bash
 furlong import-kaggle ~/kaggle-racing --inspect
-furlong import-kaggle ~/kaggle-racing
+furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017 2018 2019 2020
 furlong backtest
 ```
+
+It is a screen, not a verdict. The data stops in 2020, the market has
+sharpened since, and its prices are industry SP (margin-laden) rather than
+Betfair SP — so a positive result is flattered. The value is in the other
+direction: **no edge here is close to definitive**, and costs nothing to
+establish. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the detail.
 
 For running daily against live racing, the stack is The Racing API (from
 about £25/month for UK+IRE racecards, results and 20+ bookmakers' odds) plus

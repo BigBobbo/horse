@@ -118,9 +118,31 @@ choice for a personal model: unlike scraping, you are not relying on nobody
 enforcing a terms-of-use clause. The same licence is why it can never
 underpin anything you sell. (`docs/research/open-source-and-community.md`)
 
-It ends in 2020. That does not matter for the question it answers — whether
-the method finds any edge at all — which is a question about the method, not
-about this season's horses.
+**Read it as a screen, not a verdict.** Two limitations bite:
+
+- **It ends in 2020, and the market has sharpened since.** The 2020 move to
+  an "industrial" starting price cut overround-per-horse from 1.79% to
+  1.52%, and exchange and syndicate money has grown. An edge visible in 2014
+  may have been arbitraged away by now.
+- **Its prices are industry SP, not Betfair SP.** SP carries a bookmaker
+  margin of roughly 116% per book; BSP is margin-free. Beating SP is an
+  easier bar than the one this system is built to measure, so results here
+  are **biased optimistic**. There are no exchange prices at all, so closing
+  line value cannot be measured.
+
+What makes it worth running anyway is the asymmetry of the outcomes:
+
+| Result | What it means |
+|---|---|
+| No edge | Close to definitive. If the method cannot beat a margin-laden book in 2018, it will not beat a margin-free exchange in 2026. Stop here, cost: nothing. |
+| Edge found | Only "worth paying for current data". Not evidence of an edge today. |
+
+Prefer the recent years to the whole archive — the 1990s tell you little
+about a market that no longer exists:
+
+```bash
+furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017 2018 2019 2020
+```
 
 ```bash
 # a Kaggle login is required to download; extract the archive first

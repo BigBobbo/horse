@@ -23,12 +23,12 @@ def conn(settings) -> sqlite3.Connection:
     connection.close()
 
 
-# A moderately sized deterministic world shared by analytical tests.
-# ~180 days keeps generation around a second while giving enough history
-# for feature/model tests.
+# A deterministic world shared by the analytical tests. 420 days (~1.15
+# seasons) generates in ~2 seconds and leaves ~490 races in the test split,
+# enough for the blend's Delta R-squared assertion to be stable.
 WORLD_SEED = 11
-WORLD_DAYS = 180
-WORLD_HORSES = 300
+WORLD_DAYS = 420
+WORLD_HORSES = 400
 
 
 @pytest.fixture(scope="session")

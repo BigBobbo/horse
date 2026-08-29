@@ -10,8 +10,9 @@ holds genuine edge; a naive strategy holds none.
 Market structure generated per race (win market only):
 - three bookmakers: prices from public probabilities, favourite-longshot
   distortion (rho < 1), ~116% overround, per-book noise;
-- morning exchange: mix of truth and public opinion, ~101% book;
-- Betfair SP (BSP): closer to truth, margin-free (implied probs sum to 1).
+- morning exchange: essentially the public's opinion, ~101% book;
+- Betfair SP (BSP): the public's opinion plus a modest dose of truth (late
+  money is sharper), margin-free (implied probabilities sum to 1).
 
 Everything is generated from a single seeded ``numpy.random.Generator`` so
 identical parameters give byte-identical databases.
@@ -50,25 +51,29 @@ NH_DISTANCES = [3200, 3600, 4000, 4400, 4800]
 
 # Strength model coefficients (the data-generating process)
 SHARPNESS = 0.92          # softmax temperature^-1 applied to strength
-GOING_COEF = 0.55         # weight of going fit in true strength
+GOING_COEF = 0.85         # weight of going fit in true strength
 TRAINER_FORM_COEF = 0.9   # weight of the trainer hot/cold cycle
 DIST_COEF = 1.1           # distance-preference penalty weight
 
 # Public (market) misperception parameters — the planted inefficiency
-PUBLIC_GOING_DISCOUNT = 0.65     # public only sees 35% of going fit
-PUBLIC_TRAINER_DISCOUNT = 0.75   # public only sees 25% of trainer form cycle
-PUBLIC_LAST_WIN_OVERREACTION = 0.30
+PUBLIC_GOING_DISCOUNT = 0.90     # public sees only 10% of going fit
+PUBLIC_TRAINER_DISCOUNT = 0.95   # public sees only 5% of the trainer form cycle
+PUBLIC_LAST_WIN_OVERREACTION = 0.40
 PUBLIC_NOISE = 0.15
 
 BOOK_OVERROUND = 1.16
 BOOK_FLB_RHO = 0.93              # <1 -> longshots overbet (favourite-longshot bias)
 BOOKMAKERS = ["GreenBook", "HarpBet", "ShamrockOdds"]
 
-EXCH_MORNING_TRUTH_WEIGHT = 0.55
+EXCH_MORNING_TRUTH_WEIGHT = 0.05
 EXCH_MORNING_NOISE = 0.12
 EXCH_MORNING_BOOK = 1.01
 
-BSP_TRUTH_WEIGHT = 0.78
+# Calibration target: an omniscient model blended with this market gains
+# Delta R-squared of about +0.018 over the market alone -- the same edge
+# Benter (1994) reported for his Hong Kong model. A realistic model that
+# must infer the latent factors from form should capture a fraction of it.
+BSP_TRUTH_WEIGHT = 0.20
 BSP_NOISE = 0.05
 
 

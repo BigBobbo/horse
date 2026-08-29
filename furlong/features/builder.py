@@ -23,9 +23,12 @@ HORSE_SHRINK_M = 8.0
 TRAINER_SHRINK_M = 20.0
 JOCKEY_SHRINK_M = 20.0
 WINDOW_SHRINK_M = 10.0
+SHORT_WINDOW_SHRINK_M = 6.0
 FIT_SHRINK_M = 6.0
+GOING_SLOPE_RIDGE = 12.0
 
 WINDOW_DAYS = 90
+SHORT_WINDOW_DAYS = 30   # trainer form cycles turn faster than a quarter
 RECENT_FORM_RUNS = 5
 RECENT_FORM_DECAY = 0.7
 
@@ -40,7 +43,20 @@ GOING_ORDER = ["heavy", "soft", "good", "good_to_firm", "firm"]
 DIST_EDGES = [0.0, 1200.0, 1600.0, 2800.0, np.inf]  # sprint / mile / middle / staying
 N_DIST_BUCKETS = len(DIST_EDGES) - 1
 
+# Elo-style ability rating. Benter lists "adjustment for the strength of
+# opposition" as essential: a win against good horses means far more than a
+# win in a weak race, and raw strike rates cannot see the difference.
+ELO_K = 24.0
+ELO_SCALE = 90.0        # rating points per unit of latent strength
+ELO_START = 0.0
+ELO_TRAINER_K = 3.0     # trainers/jockeys move much more slowly than horses
+
 FEATURE_COLUMNS = [
+    "elo",
+    "elo_vs_field",
+    "elo_rank_pct",
+    "trainer_elo",
+    "jockey_elo",
     "career_starts",
     "career_win_rate",
     "career_place_rate",
@@ -50,9 +66,13 @@ FEATURE_COLUMNS = [
     "last_finish_norm",
     "recent_form",
     "going_fit",
+    "going_slope",
+    "going_slope_today",
     "dist_fit",
     "trainer_sr_career",
     "trainer_sr_window",
+    "trainer_sr_short",
+    "trainer_form_delta",
     "trainer_runs_window",
     "jockey_sr_career",
     "jockey_sr_window",
@@ -75,15 +95,21 @@ def _date_ints(series: pd.Series) -> np.ndarray:
 
 
 class _EntityStats:
-    """Per-entity expanding + windowed sums, read strictly before each row's date."""
+    """Per-entity expanding + windowed sums, read strictly before each row's date.
+
+    ``windows`` are lookback lengths in days; each produces ``<key>_w<days>``
+    sums alongside the expanding ``<key>_before`` totals.
+    """
 
     def __init__(self, df: pd.DataFrame, entity_col: str, completed: np.ndarray,
-                 value_cols: dict[str, np.ndarray]):
+                 value_cols: dict[str, np.ndarray],
+                 windows: tuple[int, ...] = (WINDOW_DAYS,)):
         self.n = len(df)
         self.entity = df[entity_col].fillna(-1).to_numpy()
         self.dates = _date_ints(df["date"])
         self.completed = completed
         self.values = value_cols
+        self.windows = windows
         self.results: dict[str, np.ndarray] = {}
         self._compute()
 
@@ -92,9 +118,11 @@ class _EntityStats:
         out: dict[str, np.ndarray] = {}
         for key in self.values:
             out[f"{key}_before"] = np.zeros(self.n)
-            out[f"{key}_window"] = np.zeros(self.n)
+            for w in self.windows:
+                out[f"{key}_w{w}"] = np.zeros(self.n)
         out["n_before"] = np.zeros(self.n)
-        out["n_window"] = np.zeros(self.n)
+        for w in self.windows:
+            out[f"n_w{w}"] = np.zeros(self.n)
 
         entity_sorted = self.entity[order]
         boundaries = np.flatnonzero(np.diff(entity_sorted)) + 1
@@ -109,14 +137,16 @@ class _EntityStats:
             comp = self.completed[idx].astype(float)
             cum_n = np.concatenate(([0.0], np.cumsum(comp)))
             hi = np.searchsorted(dates, dates, side="left")
-            lo = np.searchsorted(dates, dates - WINDOW_DAYS, side="left")
+            los = {w: np.searchsorted(dates, dates - w, side="left") for w in self.windows}
             out["n_before"][idx] = cum_n[hi]
-            out["n_window"][idx] = cum_n[hi] - cum_n[lo]
+            for w, lo in los.items():
+                out[f"n_w{w}"][idx] = cum_n[hi] - cum_n[lo]
             for key, values in self.values.items():
                 masked = np.where(self.completed[idx], np.nan_to_num(values[idx]), 0.0)
                 cum_v = np.concatenate(([0.0], np.cumsum(masked)))
                 out[f"{key}_before"][idx] = cum_v[hi]
-                out[f"{key}_window"][idx] = cum_v[hi] - cum_v[lo]
+                for w, lo in los.items():
+                    out[f"{key}_w{w}"][idx] = cum_v[hi] - cum_v[lo]
         self.results = out
 
 
@@ -180,6 +210,80 @@ def _last_run_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
     }, index=df.index)
 
 
+def _elo_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
+    """Opposition-adjusted ability ratings, updated strictly after each race.
+
+    Multi-runner Elo: each runner's expected win share is the softmax of the
+    field's current ratings; after the race every rating moves by
+    ``K * (actual - expected)``. Races are processed in start-time order and
+    a rating is read *before* its own race is applied, so the feature is
+    point-in-time safe by construction.
+    """
+    n = len(df)
+    horse = df["horse_id"].to_numpy()
+    trainer = df["trainer_id"].fillna(-1).to_numpy()
+    jockey = df["jockey_id"].fillna(-1).to_numpy()
+    won = (df["win_flag"].fillna(0) == 1).to_numpy(dtype=float)
+
+    elo = np.full(n, np.nan)
+    elo_vs_field = np.zeros(n)
+    elo_rank_pct = np.full(n, 0.5)
+    trainer_elo = np.zeros(n)
+    jockey_elo = np.zeros(n)
+
+    horse_r: dict = {}
+    trainer_r: dict = {}
+    jockey_r: dict = {}
+
+    order = np.lexsort((df["race_id"].to_numpy(), _date_ints(df["date"])))
+    race_ids = df["race_id"].to_numpy()
+    start = 0
+    ordered_races = race_ids[order]
+    boundaries = np.flatnonzero(np.diff(ordered_races)) + 1
+    for gs, ge in zip(np.concatenate(([0], boundaries)),
+                      np.concatenate((boundaries, [len(order)]))):
+        idx = order[gs:ge]
+        ratings = np.array([horse_r.get(horse[i], ELO_START) for i in idx])
+        t_ratings = np.array([trainer_r.get(trainer[i], ELO_START) for i in idx])
+        j_ratings = np.array([jockey_r.get(jockey[i], ELO_START) for i in idx])
+
+        elo[idx] = ratings
+        elo_vs_field[idx] = ratings - ratings.mean()
+        if len(idx) > 1:
+            ranks = ratings.argsort().argsort()
+            elo_rank_pct[idx] = ranks / (len(idx) - 1)
+        trainer_elo[idx] = t_ratings
+        jockey_elo[idx] = j_ratings
+
+        if not completed[idx].all():
+            continue  # declared-only race: nothing to learn from yet
+        expected = _softmax_np(ratings / ELO_SCALE)
+        actual = won[idx]
+        if actual.sum() != 1:
+            continue  # dead heat or missing winner: skip the update
+        delta = ELO_K * (actual - expected)
+        for k, i in enumerate(idx):
+            horse_r[horse[i]] = ratings[k] + delta[k]
+            if trainer[i] != -1:
+                trainer_r[trainer[i]] = t_ratings[k] + ELO_TRAINER_K * (actual[k] - expected[k])
+            if jockey[i] != -1:
+                jockey_r[jockey[i]] = j_ratings[k] + ELO_TRAINER_K * (actual[k] - expected[k])
+
+    return pd.DataFrame({
+        "elo": elo / ELO_SCALE,
+        "elo_vs_field": elo_vs_field / ELO_SCALE,
+        "elo_rank_pct": elo_rank_pct,
+        "trainer_elo": trainer_elo / ELO_SCALE,
+        "jockey_elo": jockey_elo / ELO_SCALE,
+    }, index=df.index)
+
+
+def _softmax_np(x: np.ndarray) -> np.ndarray:
+    shifted = x - x.max()
+    exp = np.exp(shifted)
+    return exp / exp.sum()
+
+
 def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
     """Compute point-in-time features for every row of ``runs``.
 
@@ -205,7 +309,15 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
     dist_bucket = np.digitize(df["distance_m"].fillna(1600).to_numpy(), DIST_EDGES[1:-1])
 
     # --- horse expanding stats (career + per-going + per-distance buckets)
-    horse_values = {"win": win, "placed": placed, "perf": perf}
+    horse_values = {
+        "win": win,
+        "placed": placed,
+        "perf": perf,
+        # sums for a per-horse regression of performance on the going scale
+        "going_x": going_scale,
+        "going_x2": going_scale ** 2,
+        "going_xy": going_scale * perf,
+    }
     for b in range(len(GOING_ORDER)):
         indicator = (going_bucket == b).astype(float)
         horse_values[f"going{b}_perf"] = perf * indicator
@@ -216,7 +328,10 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
         horse_values[f"dist{b}_n"] = indicator
     horse_stats = _EntityStats(df, "horse_id", completed, horse_values).results
 
-    trainer_stats = _EntityStats(df, "trainer_id", completed, {"win": win}).results
+    trainer_stats = _EntityStats(
+        df, "trainer_id", completed, {"win": win},
+        windows=(WINDOW_DAYS, SHORT_WINDOW_DAYS),
+    ).results
     jockey_stats = _EntityStats(df, "jockey_id", completed, {"win": win}).results
 
     base_rate = BASE_WIN_RATE
@@ -242,6 +357,18 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
         going_n += weight * horse_stats[f"going{b}_n_before"]
     going_fit = (going_sum + FIT_SHRINK_M * overall_perf) / (going_n + FIT_SHRINK_M) - overall_perf
 
+    # Ridge-shrunk least-squares slope of past performance on the going scale:
+    # a direct estimate of "does this horse improve on softer/firmer ground?".
+    # Neighbourhood averages (going_fit) cannot express a monotone preference.
+    n_prior = career_starts
+    sum_x = horse_stats["going_x_before"]
+    sum_xx = horse_stats["going_x2_before"]
+    sum_y = horse_stats["perf_before"]
+    sum_xy = horse_stats["going_xy_before"]
+    denom = n_prior * sum_xx - sum_x ** 2 + GOING_SLOPE_RIDGE
+    going_slope = np.where(n_prior >= 2, (n_prior * sum_xy - sum_x * sum_y) / denom, 0.0)
+    going_slope_today = going_slope * going_scale
+
     dist_sum = np.zeros(n)
     dist_n = np.zeros(n)
     for b in range(N_DIST_BUCKETS):
@@ -253,14 +380,19 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
     trainer_sr_career = (trainer_stats["win_before"] + TRAINER_SHRINK_M * base_rate) / (
         trainer_stats["n_before"] + TRAINER_SHRINK_M
     )
-    trainer_sr_window = (trainer_stats["win_window"] + WINDOW_SHRINK_M * base_rate) / (
-        trainer_stats["n_window"] + WINDOW_SHRINK_M
+    trainer_sr_window = (trainer_stats[f"win_w{WINDOW_DAYS}"] + WINDOW_SHRINK_M * base_rate) / (
+        trainer_stats[f"n_w{WINDOW_DAYS}"] + WINDOW_SHRINK_M
     )
+    trainer_sr_short = (
+        trainer_stats[f"win_w{SHORT_WINDOW_DAYS}"] + SHORT_WINDOW_SHRINK_M * base_rate
+    ) / (trainer_stats[f"n_w{SHORT_WINDOW_DAYS}"] + SHORT_WINDOW_SHRINK_M)
+    # Hot/cold signal: the short window relative to the yard's own long-run level.
+    trainer_form_delta = trainer_sr_short - trainer_sr_career
     jockey_sr_career = (jockey_stats["win_before"] + JOCKEY_SHRINK_M * base_rate) / (
         jockey_stats["n_before"] + JOCKEY_SHRINK_M
     )
-    jockey_sr_window = (jockey_stats["win_window"] + WINDOW_SHRINK_M * base_rate) / (
-        jockey_stats["n_window"] + WINDOW_SHRINK_M
+    jockey_sr_window = (jockey_stats[f"win_w{WINDOW_DAYS}"] + WINDOW_SHRINK_M * base_rate) / (
+        jockey_stats[f"n_w{WINDOW_DAYS}"] + WINDOW_SHRINK_M
     )
 
     last = _last_run_features(df, completed)
@@ -281,7 +413,14 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
     race_mean_or = or_series.groupby(df["race_id"]).transform("mean")
     or_within_race = (or_series - race_mean_or).fillna(0.0).to_numpy()
 
+    elo = _elo_features(df, completed)
+
     features = pd.DataFrame({
+        "elo": elo["elo"].fillna(0.0).to_numpy(),
+        "elo_vs_field": elo["elo_vs_field"].to_numpy(),
+        "elo_rank_pct": elo["elo_rank_pct"].to_numpy(),
+        "trainer_elo": elo["trainer_elo"].to_numpy(),
+        "jockey_elo": elo["jockey_elo"].to_numpy(),
         "career_starts": np.log1p(career_starts),
         "career_win_rate": career_win_rate,
         "career_place_rate": career_place_rate,
@@ -291,10 +430,14 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
         "last_finish_norm": last["last_finish_norm"].fillna(0.5).to_numpy(),
         "recent_form": last["recent_form"].fillna(0.5).to_numpy(),
         "going_fit": going_fit,
+        "going_slope": going_slope,
+        "going_slope_today": going_slope_today,
         "dist_fit": dist_fit,
         "trainer_sr_career": trainer_sr_career,
         "trainer_sr_window": trainer_sr_window,
-        "trainer_runs_window": np.log1p(trainer_stats["n_window"]),
+        "trainer_sr_short": trainer_sr_short,
+        "trainer_form_delta": trainer_form_delta,
+        "trainer_runs_window": np.log1p(trainer_stats[f"n_w{WINDOW_DAYS}"]),
         "jockey_sr_career": jockey_sr_career,
         "jockey_sr_window": jockey_sr_window,
         "draw_pct": draw_pct,

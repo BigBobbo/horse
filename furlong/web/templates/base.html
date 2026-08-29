@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Furlong{% endblock %}</title>
+<style>
+  :root {
+    --ink: #16191d; --muted: #5b636d; --line: #dfe3e8; --bg: #fbfbfc;
+    --panel: #ffffff; --accent: #16603a; --accent-soft: #e8f3ec;
+    --warn: #8a5a00; --warn-soft: #fff6e0; --neg: #9b2226;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8eaed; --muted: #9aa3ad; --line: #2b3138; --bg: #14171a;
+      --panel: #1c2024; --accent: #5fbf8c; --accent-soft: #1b2f24;
+      --warn: #e0b050; --warn-soft: #2d2513; --neg: #e06c70;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { border-bottom: 1px solid var(--line); background: var(--panel); }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.25rem; }
+  nav { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 0; flex-wrap: wrap; }
+  nav .brand { font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; }
+  nav .brand span { color: var(--muted); font-weight: 400; font-size: .85rem; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover, nav a.active { color: var(--accent); }
+  main { padding: 1.75rem 0 3rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .35rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .75rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: .6rem .7rem; text-align: left; border-bottom: 1px solid var(--line);
+           white-space: nowrap; }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .badge { display: inline-block; padding: .1rem .45rem; border-radius: 999px;
+           font-size: .78rem; font-weight: 600; background: var(--accent-soft);
+           color: var(--accent); }
+  .badge.grey { background: var(--line); color: var(--muted); }
+  .pos { color: var(--accent); } .neg { color: var(--neg); }
+  .note { background: var(--warn-soft); border-left: 3px solid var(--warn);
+          padding: .8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0;
+          color: var(--ink); }
+  .cards { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+           margin: 1rem 0 1.5rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          padding: .85rem 1rem; }
+  .card .label { color: var(--muted); font-size: .78rem; text-transform: uppercase;
+                 letter-spacing: .04em; }
+  .card .value { font-size: 1.45rem; font-weight: 650; font-variant-numeric: tabular-nums;
+                 margin-top: .15rem; }
+  .card .hint { color: var(--muted); font-size: .8rem; }
+  footer { border-top: 1px solid var(--line); background: var(--panel);
+           color: var(--muted); font-size: .85rem; padding: 1.25rem 0 2rem; }
+  footer a { color: var(--muted); }
+  .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 8px;
+           padding: 2rem; text-align: center; color: var(--muted); }
+  form.dates { margin-left: auto; }
+  select { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+           border-radius: 6px; padding: .3rem .5rem; }
+</style>
+</head>
+<body>
+<header><div class="wrap"><nav>
+  <div class="brand">Furlong <span>Irish-first racing value engine</span></div>
+  <a href="/">Today</a>
+  <a href="/performance">Performance</a>
+  <a href="/method">Method</a>
+</nav></div></header>
+
+<main><div class="wrap">
+{% block content %}{% endblock %}
+</div></main>
+
+<footer><div class="wrap">
+  <p><strong>18+ only.</strong> Furlong is an analytics tool. It publishes opinions about
+  prices; it does not take bets, hold money, or place bets for you. Nothing here is a
+  prediction of a result, and no betting strategy is guaranteed to profit — most people
+  who bet lose money over time.</p>
+  <p>If gambling is causing you harm, help is free and confidential:
+  problem gambling helpline <strong>{{ helpline }}</strong>{% for name, url in rg_links %},
+  <a href="{{ url }}" rel="noopener">{{ name }}</a>{% endfor %}.</p>
+</div></footer>
+</body>
+</html>

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Today — Furlong{% endblock %}
+{% block content %}
+
+<h1>Suggestions{% if date %} for {{ date }}{% endif %}</h1>
+<p class="sub">Model probability blended with the market, priced against the best
+available odds. Ranked by expected value.</p>
+
+{% if dates %}
+<form class="dates" method="get" action="/">
+  <label>Race day
+    <select name="date" onchange="this.form.submit()">
+      {% for d in dates %}
+      <option value="{{ d }}" {% if d == date %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% endif %}
+
+{% if not suggestions %}
+  <div class="empty">
+    <p><strong>No qualifying value bets.</strong></p>
+    <p>Not betting is a position. On most days the market is not wrong enough
+    to be worth the risk.</p>
+  </div>
+{% else %}
+  <div class="note">
+    <strong>Do not take a price below the floor.</strong> The value is in the price,
+    not the horse. Advised prices decay within minutes of publication — one well-known
+    tipster's advised average of 10.41 was 7.35 by the time followers got on. If the
+    price has gone, the bet has gone.
+  </div>
+
+  <div class="scroll">
+  <table>
+    <thead><tr>
+      <th>Off</th><th>Race</th><th>Runner</th>
+      <th class="num">Model</th><th class="num">Market</th>
+      <th class="num">Fair</th><th class="num">Advised</th><th class="num">Floor</th>
+      <th class="num">Edge</th><th class="num">Stake</th><th>Take at</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {% for s in suggestions %}
+      <tr>
+        <td>{{ s.off[11:16] }}</td>
+        <td><a href="/races/{{ s.race_id }}">{{ s.course }}</a>
+            <span class="badge grey">{{ s.country }}</span></td>
+        <td>{{ s.horse }}</td>
+        <td class="num">{{ "%.1f%%"|format(s.blend_prob * 100) }}</td>
+        <td class="num">{{ "%.1f%%"|format(s.market_prob * 100) if s.market_prob else "—" }}</td>
+        <td class="num">{{ "%.2f"|format(s.fair_odds) }}</td>
+        <td class="num"><strong>{{ "%.2f"|format(s.advised_odds) }}</strong></td>
+        <td class="num">{{ "%.2f"|format(s.price_floor) }}</td>
+        <td class="num pos">{{ "%+.1f%%"|format(s.ev * 100) }}</td>
+        <td class="num">{{ "%.2f"|format(s.stake_units) }}u</td>
+        <td>{{ s.bookmaker or s.venue }}</td>
+        <td>
+          {% if s.status == 'withdrawn' %}<span class="badge grey">withdrawn</span>
+          {% elif s.result %}
+            <span class="badge {% if s.result == 'won' %}{% else %}grey{% endif %}">{{ s.result }}</span>
+            {% if s.pl_units is not none %}
+              <span class="{{ 'pos' if s.pl_units > 0 else 'neg' }}">{{ "%+.2f"|format(s.pl_units) }}u</span>
+            {% endif %}
+          {% else %}<span class="badge">open</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <p class="sub" style="margin-top:1rem">
+    {{ suggestions|length }} suggestion(s), {{ "%.2f"|format(total_stake) }} units staked.
+    One unit is 1% of your bankroll; stakes are quarter-Kelly, capped per bet and per day.
+    Plan for a bankroll of 200 units or more — losing runs of 25 to 30 bets are normal,
+    not a sign the model is broken.
+  </p>
+{% endif %}
+{% endblock %}

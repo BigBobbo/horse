@@ -48,3 +48,13 @@ def test_racing_api_credentials_only_required_on_use():
         "FURLONG_RACING_API_PASSWORD": "pass",
     }, env_file=None)
     assert s2.require_racing_api() == ("user", "pass")
+
+
+def test_paths_accept_strings():
+    """Constructing Settings directly with string paths must work."""
+    s = Settings(data_dir="/tmp/furlong-test")
+    assert isinstance(s.data_dir, Path)
+    assert s.database_path == Path("/tmp/furlong-test/furlong.sqlite")
+
+    s2 = Settings(data_dir="/tmp/a", db_path="/tmp/b/custom.sqlite")
+    assert s2.database_path == Path("/tmp/b/custom.sqlite")

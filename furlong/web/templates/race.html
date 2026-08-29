@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ race.course }} {{ race.start_time_utc[11:16] }} — Furlong{% endblock %}
+{% block content %}
+
+<h1>{{ race.course }} {{ race.start_time_utc[11:16] }}</h1>
+<p class="sub">
+  {{ race.date }} · {{ race.country }} · {{ race.race_type|upper }} ·
+  {{ "%.0f"|format(race.distance_m) }}m · going {{ race.going|replace("_", " ") }}
+  {% if race.race_class %}· class {{ race.race_class }}{% endif %}
+  · <span class="badge grey">{{ race.status }}</span>
+</p>
+
+<div class="scroll">
+<table>
+  <thead><tr>
+    <th>Runner</th><th>Trainer</th><th>Jockey</th><th class="num">Draw</th>
+    <th class="num">Model</th><th class="num">Market</th><th class="num">Fair</th>
+    <th class="num">Best book</th><th class="num">Exchange</th><th class="num">BSP</th>
+    <th class="num">Edge</th><th>Result</th>
+  </tr></thead>
+  <tbody>
+  {% for r in runners %}
+    <tr>
+      <td>{{ r.horse }}{% if r.status == 'nonrunner' %}
+          <span class="badge grey">NR</span>{% endif %}</td>
+      <td>{{ r.trainer or "—" }}</td>
+      <td>{{ r.jockey or "—" }}</td>
+      <td class="num">{{ r.draw if r.draw is not none else "—" }}</td>
+      <td class="num">{{ "%.1f%%"|format(r.model_prob * 100) if r.model_prob else "—" }}</td>
+      <td class="num">{{ "%.1f%%"|format(r.market_prob * 100) if r.market_prob else "—" }}</td>
+      <td class="num">{{ "%.2f"|format(r.fair_odds) if r.fair_odds else "—" }}</td>
+      <td class="num">{{ "%.2f"|format(r.best_book) if r.best_book else "—" }}</td>
+      <td class="num">{{ "%.2f"|format(r.exchange_odds) if r.exchange_odds else "—" }}</td>
+      <td class="num">{{ "%.2f"|format(r.bsp) if r.bsp else "—" }}</td>
+      <td class="num">
+        {% if r.ev is not none %}
+          <span class="{{ 'pos' if r.ev > 0 else 'neg' }}">{{ "%+.1f%%"|format(r.ev * 100) }}</span>
+        {% else %}—{% endif %}
+      </td>
+      <td>{% if r.finish_pos %}{{ r.finish_pos }}{% if r.finish_pos == 1 %}
+          <span class="badge">won</span>{% endif %}{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<p class="sub" style="margin-top:1rem">
+  Only runners carrying a suggestion show a model probability: the value engine
+  prices every runner, but publishes only those clearing the edge, probability
+  and odds filters.
+</p>
+{% endblock %}

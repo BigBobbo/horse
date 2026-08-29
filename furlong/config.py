@@ -65,6 +65,14 @@ class Settings:
     # Populated for provenance
     env_file: Path | None = field(default=None, repr=False)
 
+    def __post_init__(self) -> None:
+        # Accept plain strings for path settings: constructing Settings
+        # directly is common in scripts and tests.
+        if not isinstance(self.data_dir, Path):
+            self.data_dir = Path(self.data_dir)
+        if self.db_path is not None and not isinstance(self.db_path, Path):
+            self.db_path = Path(self.db_path)
+
     @property
     def database_path(self) -> Path:
         return self.db_path if self.db_path is not None else self.data_dir / "furlong.sqlite"

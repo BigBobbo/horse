@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Performance — Furlong{% endblock %}
+{% block content %}
+
+<h1>Performance</h1>
+<p class="sub">Every advised bet, settled against the result and Betfair SP.</p>
+
+{% if metrics.n_settled == 0 %}
+  <div class="empty">
+    <p><strong>Nothing settled yet.</strong></p>
+    <p>{{ metrics.n_open }} suggestion(s) open, {{ metrics.n_withdrawn }} withdrawn.
+    Run <code>furlong settle</code> after racing.</p>
+  </div>
+{% else %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Mean CLV</div>
+    <div class="value">{{ "%.3f"|format(metrics.mean_clv) if metrics.mean_clv else "—" }}</div>
+    <div class="hint">advised price ÷ Betfair SP{% if metrics.pct_beat_close is not none %};
+      beat the close {{ "%.0f%%"|format(metrics.pct_beat_close * 100) }} of the time{% endif %}</div>
+  </div>
+  <div class="card">
+    <div class="label">Settled bets</div>
+    <div class="value">{{ metrics.n_settled }}</div>
+    <div class="hint">{{ metrics.n_won }} won ({{ "%.0f%%"|format(metrics.strike_rate * 100) }})</div>
+  </div>
+  <div class="card">
+    <div class="label">Profit</div>
+    <div class="value {{ 'pos' if metrics.profit_units > 0 else 'neg' }}">
+      {{ "%+.2f"|format(metrics.profit_units) }}u</div>
+    <div class="hint">on {{ "%.1f"|format(metrics.staked_units) }}u staked</div>
+  </div>
+  <div class="card">
+    <div class="label">ROI</div>
+    <div class="value {{ 'pos' if metrics.roi > 0 else 'neg' }}">{{ "%+.1f%%"|format(metrics.roi * 100) }}</div>
+    <div class="hint">flat stakes {{ "%+.1f%%"|format(metrics.flat_stake_roi * 100) }}
+      &plusmn; {{ "%.1f%%"|format(metrics.flat_stake_roi_se * 100) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Max drawdown</div>
+    <div class="value">{{ "%.1f"|format(metrics.max_drawdown_units) }}u</div>
+    <div class="hint">longest losing run {{ metrics.longest_losing_run }}</div>
+  </div>
+</div>
+
+<div class="note">
+  {% if metrics.roi_is_significant %}
+    This result clears two standard errors, but a single sample is not a track record.
+    Keep watching closing line value.
+  {% else %}
+    <strong>This profit figure is not statistically significant.</strong> With
+    {{ metrics.n_settled }} settled bet(s) it cannot be. Proving a 4% edge from profit
+    alone takes roughly 7,000 to 23,000 bets; closing line value settles the question in
+    tens. Judge the model on CLV first, profit second.
+  {% endif %}
+</div>
+
+<h2>By month</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Month</th><th class="num">Bets</th><th class="num">Won</th>
+    <th class="num">Staked</th><th class="num">Profit</th><th class="num">ROI</th>
+    <th class="num">Mean CLV</th></tr></thead>
+  <tbody>
+  {% for m in metrics.monthly %}
+    <tr>
+      <td>{{ m.month }}</td>
+      <td class="num">{{ m.bets }}</td>
+      <td class="num">{{ m.winners }}</td>
+      <td class="num">{{ "%.1f"|format(m.staked) }}u</td>
+      <td class="num {{ 'pos' if m.profit > 0 else 'neg' }}">{{ "%+.2f"|format(m.profit) }}u</td>
+      <td class="num">{{ "%+.1f%%"|format(m.roi * 100) if m.roi == m.roi else "—" }}</td>
+      <td class="num">{{ "%.3f"|format(m.mean_clv) if m.mean_clv == m.mean_clv else "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>By country</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Country</th><th class="num">Bets</th><th class="num">Won</th>
+    <th class="num">Profit</th><th class="num">ROI</th><th class="num">Mean CLV</th></tr></thead>
+  <tbody>
+  {% for c in metrics.by_country %}
+    <tr>
+      <td>{{ c.country }}</td>
+      <td class="num">{{ c.bets }}</td>
+      <td class="num">{{ c.winners }}</td>
+      <td class="num {{ 'pos' if c.profit > 0 else 'neg' }}">{{ "%+.2f"|format(c.profit) }}u</td>
+      <td class="num">{{ "%+.1f%%"|format(c.roi * 100) if c.roi == c.roi else "—" }}</td>
+      <td class="num">{{ "%.3f"|format(c.mean_clv) if c.mean_clv == c.mean_clv else "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

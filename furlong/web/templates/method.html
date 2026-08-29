@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Method — Furlong{% endblock %}
+{% block content %}
+
+<h1>How this works, and what it cannot do</h1>
+<p class="sub">The uncomfortable parts first.</p>
+
+<h2>What you should expect</h2>
+<div class="note">
+  <p><strong>A good outcome is a few percent return, with long losing runs on the way.</strong>
+  Independently verified value services sit around 4–7% ROI. Anything advertising
+  20%+ sustained on daily racing volume is outside everything that has ever been verified.</p>
+  <p>At a genuine 4% edge and average odds of 5.0, flat stakes:</p>
+  <ul>
+    <li>After 1,000 bets you are still <strong>losing money about 25% of the time</strong>.</li>
+    <li>The median worst drawdown over 5,000 bets is around <strong>107 units</strong>.</li>
+    <li>You will hit a losing run of <strong>24 to 31 bets</strong> somewhere along the way.</li>
+    <li>A bankroll of <strong>200–300 units</strong> is needed to survive that comfortably.</li>
+  </ul>
+  <p>Proving the edge from profit alone would take roughly <strong>7,000 to 23,000 bets</strong>
+  — four to seven years at five bets a day. That is why closing line value, not profit,
+  is the headline metric on the performance page.</p>
+</div>
+
+<h2>The model</h2>
+<p>Two stages, following Bill Benter's 1994 design — the one that made a Hong Kong
+syndicate close to a billion dollars.</p>
+<ol>
+  <li><strong>A fundamental model</strong> scores every runner from its form history:
+  opposition-adjusted ability ratings, going and distance suitability estimated from the
+  horse's own record, trainer and jockey strike rates shrunk toward the population mean,
+  days since last run, class and field shape. Every feature is computed strictly from
+  races run <em>before</em> the one being priced.</li>
+  <li><strong>A blend with the market.</strong> The model's probabilities are combined
+  with the market's implied probabilities by maximum likelihood. This is the step that
+  matters. Benter called incorporating public odds his single most important innovation:
+  a standalone model is systematically overconfident in its own opinions, and only the
+  blend produces probabilities worth staking on.</li>
+</ol>
+<p>The test of the model is therefore not accuracy but <em>added information</em> —
+how much the blend improves on the market alone. If the model knows nothing the market
+does not, the blend weight on it collapses to zero and the suggestions stop. That is
+the intended behaviour, not a failure.</p>
+
+<h2>The value test</h2>
+<p>A suggestion is published only when the best available price clears all three filters:</p>
+<ul>
+  <li><strong>Minimum edge</strong> — expected value per unit staked, after exchange
+  commission.</li>
+  <li><strong>Minimum probability</strong> — no longshots. Relative probability errors
+  are largest there, and the favourite-longshot bias means bookmaker prices on outsiders
+  are the worst value in racing (backing every 100/1+ shot loses about 61%).</li>
+  <li><strong>Maximum odds</strong> — a hard ceiling, for the same reason.</li>
+</ul>
+
+<h2>The price floor</h2>
+<p>Every suggestion carries a floor: the shortest price at which the bet still clears the
+edge threshold. This is not a formality. Advised prices collapse within minutes of
+publication — one widely followed tipster's advised average of 10.41 was 7.35 by the time
+followers actually got on, and independent tracking has measured ROI losses of 4.5 to 24.5
+percentage points from taking the price fifteen minutes late. <strong>Below the floor there
+is no bet.</strong></p>
+
+<h2>Staking</h2>
+<p>Quarter-Kelly, capped per bet and per day. Full Kelly is a trap: if you overestimate
+your advantage by a factor of two, full Kelly produces negative growth. Half-Kelly keeps
+about three quarters of the growth at half the volatility; a quarter is more forgiving
+still of a model that is wrong about how right it is.</p>
+
+<h2>Where you can actually bet</h2>
+<p>Bookmakers restrict winning accounts quickly — 643,779 British accounts had
+restrictions applied in a single year, and surveys of engaged punters put the figure far
+higher among those who win. Roughly one in five affected punters was cut after fewer than
+ten bets. A value strategy that works will get its bookmaker accounts limited.</p>
+<p>The durable venue is the exchange, where winners are tolerated and charged commission
+instead, and the Tote pools, which cannot restrict anyone. Bookmaker prices here are shown
+for comparison and for Best Odds Guaranteed value; plan on the exchange for anything
+sustained.</p>
+
+<h2>What this is not</h2>
+<p>Furlong takes no bets, holds no money, and places nothing on your behalf. It is an
+analytics tool that publishes opinions about prices. It cannot tell you which horse will
+win — nothing can. It estimates probabilities, and looks for prices that are too big for
+them.</p>
+{% endblock %}

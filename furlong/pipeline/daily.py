@@ -36,7 +36,7 @@ from furlong.modeling.market import market_probabilities
 from furlong.modeling.train import attach_market, train_on_frames
 from furlong.features.dataset import build_dataset
 from furlong.value.engine import Suggestion, find_value
-from furlong.value.staking import apply_daily_cap, stake_for
+from furlong.value.staking import apply_daily_cap, apply_race_cap, stake_for
 from furlong import repo
 
 PUBLISH_LOCAL_TIME = "09:00"
@@ -50,6 +50,10 @@ PUBLISH_LOCAL_TIME = "09:00"
 # against 0.273 fitted on morning prices, and the corresponding information
 # gain over the market is +0.0015 against +0.0042.
 LIVE_MARKET_SOURCE = "exchange"
+# Betfair SP only exists after the off, so it must be unreachable in the live
+# path -- including on a replay or rescore of a past date, where BSP rows do
+# exist in the database and would otherwise be used behind a suggestion.
+LIVE_MARKET_SOURCES = ("exchange", "book")
 
 
 @dataclass
@@ -138,7 +142,8 @@ def score_date(settings: Settings, conn: sqlite3.Connection, date: str,
     history = build_dataset(conn, where="ra.date < ?", params=(date,))
     if history.frame.empty:
         raise ValueError(f"no completed races before {date} to train on")
-    history_frame = attach_market(conn, history.frame, prefer=LIVE_MARKET_SOURCE)
+    history_frame = attach_market(conn, history.frame, prefer=LIVE_MARKET_SOURCE,
+                                  allowed=LIVE_MARKET_SOURCES)
 
     dates = sorted(history_frame["date"].unique())
     split_idx = max(1, int(len(dates) * 0.85))
@@ -156,8 +161,17 @@ def score_date(settings: Settings, conn: sqlite3.Connection, date: str,
     if today.empty:
         return today
 
+    # Drop races that are not really races: a walkover, or a card where the
+    # rivals have all been withdrawn, would otherwise score its lone runner at
+    # 100% and advise it as a certainty.
+    standing = today.groupby("race_id")["runner_id"].transform("size")
+    today = today[standing >= settings.min_field_size]
+    if today.empty:
+        return today
+
     today = today.sort_values(["start_time_utc", "race_id", "runner_id"]).reset_index(drop=True)
-    market = market_probabilities(conn, today, prefer=LIVE_MARKET_SOURCE)
+    market = market_probabilities(conn, today, prefer=LIVE_MARKET_SOURCE,
+                                  allowed=LIVE_MARKET_SOURCES)
     today = today.merge(market, on="runner_id", how="left", validate="one_to_one")
 
     trained = train_on_frames(train, valid, valid, kind=model_kind)
@@ -253,6 +267,7 @@ def run_daily(settings: Settings, date: str | None = None, dry_run: bool = False
         )
         for s in suggestions
     ]
+    plans = apply_race_cap(plans, [s.race_id for s in suggestions], settings)
     plans = apply_daily_cap(plans, settings)
 
     outcome = DailyOutcome(
@@ -265,11 +280,36 @@ def run_daily(settings: Settings, date: str | None = None, dry_run: bool = False
     )
 
     if not dry_run:
+        _persist_scores(conn, target, scored)
         _persist(conn, target, suggestions, plans)
         outcome.written = _write_outputs(settings, outcome, out_dir)
     conn.commit()
     conn.close()
     return outcome
+
+
+def _persist_scores(conn: sqlite3.Connection, date: str, scored: pd.DataFrame) -> None:
+    """Record every runner's probability, not just the ones we back.
+
+    The non-runner rescore has to renormalise a race when a horse comes out,
+    and the withdrawal is usually of a horse we never suggested -- without
+    the full card there is nothing to renormalise against.
+    """
+    rows = [
+        (date, int(row.race_id), int(row.runner_id), float(row.model_prob),
+         float(row.blend_prob),
+         float(row.market_prob) if pd.notna(row.market_prob) else None)
+        for row in scored.itertuples(index=False)
+    ]
+    conn.executemany(
+        """INSERT INTO race_scores (date, race_id, runner_id, model_prob, blend_prob,
+               market_prob)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(date, runner_id) DO UPDATE SET
+               model_prob=excluded.model_prob, blend_prob=excluded.blend_prob,
+               market_prob=excluded.market_prob""",
+        rows,
+    )
 
 
 def _persist(conn: sqlite3.Connection, date: str, suggestions: list[Suggestion],

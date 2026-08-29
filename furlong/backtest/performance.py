@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from furlong.backtest.report import is_significant
+from furlong.backtest.report import is_significant, json_safe
 from furlong.config import Settings
 from furlong.db import init_db
 
@@ -39,6 +39,11 @@ def load_settled(conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def compute_performance(conn: sqlite3.Connection) -> dict:
+    """Live performance metrics. Never returns NaN: see ``json_safe``."""
+    return json_safe(_compute_performance(conn))
+
+
+def _compute_performance(conn: sqlite3.Connection) -> dict:
     settled = load_settled(conn)
     open_count = conn.execute(
         "SELECT COUNT(*) n FROM suggestions WHERE status='open'"
@@ -55,6 +60,7 @@ def compute_performance(conn: sqlite3.Connection) -> dict:
             "monthly": [], "cumulative": [],
         }
 
+    WON = ("won", "deadheat")
     staked = settled[settled["result"] != "void"]
     total_staked = float(staked["stake_units"].sum())
     profit = float(settled["pl_units"].sum())
@@ -67,16 +73,20 @@ def compute_performance(conn: sqlite3.Connection) -> dict:
     )[1:]
     drawdown = peak - settled["cumulative_pl"].to_numpy()
 
+    # A void is not a loss and not a win: it leaves the losing run intact
+    # rather than resetting it, because nothing was risked.
     streak = longest = 0
     for result in settled["result"]:
-        streak = 0 if result in ("won", "deadheat", "void") else streak + 1
+        if result == "void":
+            continue
+        streak = 0 if result in WON else streak + 1
         longest = max(longest, streak)
 
     monthly = (
         settled.assign(month=pd.to_datetime(settled["date"]).dt.to_period("M").astype(str))
         .groupby("month")
         .agg(bets=("id", "size"),
-             winners=("result", lambda s: int((s == "won").sum())),
+             winners=("result", lambda s: int(s.isin(WON).sum())),
              staked=("stake_units", "sum"),
              profit=("pl_units", "sum"),
              mean_clv=("clv", "mean"))
@@ -84,12 +94,16 @@ def compute_performance(conn: sqlite3.Connection) -> dict:
     )
     monthly["roi"] = monthly["profit"] / monthly["staked"].replace(0, np.nan)
 
-    flat_returns = np.where(
-        settled["result"].isin(["won", "deadheat"]),
-        settled["advised_odds"] - 1.0,
-        np.where(settled["result"] == "void", 0.0, -1.0),
+    # Flat-stake return per unit risked, taken from the settled P/L so it
+    # agrees with the settlement engine: recomputing it from advised_odds
+    # alone would ignore commission, Rule 4 and the dead-heat split, and this
+    # figure feeds the report's own significance test.
+    risked = settled[settled["result"] != "void"]
+    flat_returns = (
+        (risked["pl_units"] / risked["stake_units"].replace(0, np.nan))
+        .fillna(0.0).to_numpy()
     )
-    flat_roi = float(flat_returns.mean())
+    flat_roi = float(flat_returns.mean()) if len(flat_returns) else 0.0
     flat_se = (
         float(flat_returns.std(ddof=1) / np.sqrt(len(flat_returns)))
         if len(flat_returns) > 1 else float("nan")
@@ -99,9 +113,12 @@ def compute_performance(conn: sqlite3.Connection) -> dict:
         "n_settled": int(len(settled)),
         "n_open": int(open_count),
         "n_withdrawn": int(withdrawn_count),
-        "n_won": int((settled["result"] == "won").sum()),
+        "n_won": int(settled["result"].isin(WON).sum()),
         "n_void": int((settled["result"] == "void").sum()),
-        "strike_rate": float((settled["result"] == "won").mean()),
+        # Voids are excluded from the denominator: no bet was struck.
+        "strike_rate": (
+            float(risked["result"].isin(WON).mean()) if len(risked) else 0.0
+        ),
         "staked_units": total_staked,
         "profit_units": profit,
         "roi": profit / total_staked if total_staked else 0.0,
@@ -125,7 +142,7 @@ def compute_performance(conn: sqlite3.Connection) -> dict:
 def _breakdown(settled: pd.DataFrame, column: str) -> list[dict]:
     grouped = settled.groupby(column).agg(
         bets=("id", "size"),
-        winners=("result", lambda s: int((s == "won").sum())),
+        winners=("result", lambda s: int(s.isin(("won", "deadheat")).sum())),
         staked=("stake_units", "sum"),
         profit=("pl_units", "sum"),
         mean_clv=("clv", "mean"),
@@ -142,5 +159,9 @@ def write_performance_report(settings: Settings, out_dir: str | None = None) -> 
     directory = Path(out_dir or (Path(settings.data_dir) / "reports"))
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "performance.json"
-    path.write_text(json.dumps(metrics, indent=2, default=str))
+    # allow_nan=False turns any surviving NaN into a loud error rather than a
+    # bare NaN literal, which is not valid JSON and is rejected by every
+    # strict parser.
+    path.write_text(json.dumps(json_safe(metrics), indent=2, default=str,
+                               allow_nan=False))
     return {"json": str(path)}

@@ -113,9 +113,9 @@ def test_blend_finds_planted_edge(trained_world):
     _, _, trained = trained_world
     metrics = trained.metrics
     assert metrics.delta_r2 > 0.0005, "planted inefficiency was not found"
-    assert metrics.blend_r2 >= metrics.market_r2
     assert metrics.blend_log_loss <= metrics.market_log_loss + 1e-9
-    assert metrics.blend_params["alpha"] > 0.0
+    # The model must earn real weight, not merely a non-negative clamp.
+    assert metrics.blend_params["alpha"] > 0.02
 
 
 def test_blend_beats_both_components(trained_world):
@@ -177,6 +177,10 @@ def test_blend_weights_never_negative():
     params = fit_blend(inverted, market, y, groups)
     assert params.alpha >= 0.0
     assert params.beta >= 0.0
+    # The meaningful claim: an anti-correlated model earns no weight, and the
+    # blend falls back on the market.
+    assert params.alpha < 0.05
+    assert params.beta > 0.5
 
 
 # -- metrics ---------------------------------------------------------------
@@ -200,3 +204,25 @@ def test_reliability_is_broadly_calibrated(trained_world):
     lowest, highest = table[0], table[-1]
     assert highest["actual"] > lowest["actual"]
     assert highest["predicted"] > lowest["predicted"]
+
+
+def test_blend_is_not_fitted_on_the_early_stopping_set():
+    """Sharing one validation set inflates alpha: the model looks better there."""
+    import pandas as pd
+
+    from furlong.modeling.train import _split_validation
+
+    valid = pd.DataFrame({
+        "date": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"],
+        "race_id": [1, 2, 3, 4],
+    })
+    early_stop, blend_fit = _split_validation(valid)
+    assert not set(early_stop["date"]) & set(blend_fit["date"])
+    assert max(early_stop["date"]) < min(blend_fit["date"])
+
+    # degenerate inputs fall back to using the whole window
+    single = pd.DataFrame({"date": ["2024-01-01"], "race_id": [1]})
+    a, b = _split_validation(single)
+    assert len(a) == len(b) == 1
+    empty = pd.DataFrame({"date": [], "race_id": []})
+    assert _split_validation(empty)[0].empty

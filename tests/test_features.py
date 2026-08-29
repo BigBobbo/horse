@@ -149,3 +149,104 @@ def test_dataset_groups_and_splits(world_conn):
     test_min = pd.to_datetime(frame.loc[splits.test, "date"]).min()
     assert (valid_min - train_max).days > 10
     assert (test_min - valid_max).days > 10
+
+
+# -- Elo ratings ------------------------------------------------------------
+
+def test_elo_does_not_leak_across_races_on_the_same_day():
+    """A trainer's 16:00 runner must not see their own 13:00 winner.
+
+    Ratings are read as they stood at the end of the previous day, and the
+    whole day's results are applied afterwards.
+    """
+    early_race = [
+        dict(runner_id=1, race_id=1, horse_id=1, horse="A", trainer_id=5, trainer="T",
+             date="2024-02-01", field_size=2, finish_pos=1, win_flag=1),
+        dict(runner_id=2, race_id=1, horse_id=2, horse="B", trainer_id=6, trainer="U",
+             date="2024-02-01", field_size=2, finish_pos=2, win_flag=0),
+    ]
+    late_race = [
+        dict(runner_id=3, race_id=2, horse_id=3, horse="C", trainer_id=5, trainer="T",
+             date="2024-02-01", field_size=2, finish_pos=None, win_flag=None,
+             status="declared"),
+        dict(runner_id=4, race_id=2, horse_id=4, horse="D", trainer_id=7, trainer="V",
+             date="2024-02-01", field_size=2, finish_pos=None, win_flag=None,
+             status="declared"),
+    ]
+    with_early = compute_features(_mini_runs(early_race + late_race)).set_index("runner_id")
+    without_early = compute_features(_mini_runs(late_race)).set_index("runner_id")
+
+    assert with_early.loc[3, "trainer_elo"] == pytest.approx(
+        without_early.loc[3, "trainer_elo"]
+    ), "same-day earlier race leaked into the trainer rating"
+
+
+def test_elo_updates_across_days():
+    """The rating must move once the day is over — otherwise it learns nothing."""
+    day_one = [
+        dict(runner_id=1, race_id=1, horse_id=1, horse="A", date="2024-02-01",
+             field_size=2, finish_pos=1, win_flag=1),
+        dict(runner_id=2, race_id=1, horse_id=2, horse="B", date="2024-02-01",
+             field_size=2, finish_pos=2, win_flag=0),
+    ]
+    day_two = [
+        dict(runner_id=3, race_id=2, horse_id=1, horse="A", date="2024-03-01",
+             field_size=2, finish_pos=None, win_flag=None, status="declared"),
+        dict(runner_id=4, race_id=2, horse_id=2, horse="B", date="2024-03-01",
+             field_size=2, finish_pos=None, win_flag=None, status="declared"),
+    ]
+    features = compute_features(_mini_runs(day_one + day_two)).set_index("runner_id")
+    assert features.loc[3, "elo"] > 0, "the winner's rating should have risen"
+    assert features.loc[4, "elo"] < 0, "the loser's rating should have fallen"
+
+
+def test_elo_still_updates_when_a_race_has_a_non_runner():
+    """Withdrawals are routine; a race with one must not be discarded."""
+    history = [
+        dict(runner_id=1, race_id=1, horse_id=1, horse="A", date="2024-02-01",
+             field_size=3, finish_pos=1, win_flag=1),
+        dict(runner_id=2, race_id=1, horse_id=2, horse="B", date="2024-02-01",
+             field_size=3, finish_pos=2, win_flag=0),
+        dict(runner_id=3, race_id=1, horse_id=3, horse="C", date="2024-02-01",
+             field_size=3, finish_pos=None, win_flag=None, status="nonrunner"),
+    ]
+    later = [
+        dict(runner_id=4, race_id=2, horse_id=1, horse="A", date="2024-03-01",
+             field_size=2, finish_pos=None, win_flag=None, status="declared"),
+        dict(runner_id=5, race_id=2, horse_id=2, horse="B", date="2024-03-01",
+             field_size=2, finish_pos=None, win_flag=None, status="declared"),
+    ]
+    features = compute_features(_mini_runs(history + later)).set_index("runner_id")
+    assert features.loc[4, "elo"] > 0, "the winner learned nothing from a race with a NR"
+    assert features.loc[5, "elo"] < 0
+
+
+def test_elo_rank_pct_shares_ties():
+    """A race of unraced horses must not be ranked by card position."""
+    runs = _mini_runs([
+        dict(runner_id=i, race_id=1, horse_id=i, horse=f"H{i}", date="2024-02-01",
+             field_size=4, finish_pos=None, win_flag=None, status="declared")
+        for i in range(1, 5)
+    ])
+    features = compute_features(runs)
+    assert features["elo_rank_pct"].nunique() == 1
+    assert features["elo_rank_pct"].iloc[0] == pytest.approx(0.5)
+
+
+def test_performance_denominator_excludes_non_runners():
+    """Finishing last of 10 that ran is 0.0, even if 12 were declared."""
+    history = [
+        dict(runner_id=i, race_id=1, horse_id=i, horse=f"H{i}", date="2024-01-01",
+             field_size=3, finish_pos=i, win_flag=int(i == 1))
+        for i in (1, 2)
+    ] + [
+        dict(runner_id=3, race_id=1, horse_id=3, horse="H3", date="2024-01-01",
+             field_size=3, finish_pos=None, win_flag=None, status="nonrunner"),
+    ]
+    later = [
+        dict(runner_id=4, race_id=2, horse_id=2, horse="H2", date="2024-02-01",
+             field_size=5, finish_pos=None, win_flag=None, status="declared"),
+    ]
+    features = compute_features(_mini_runs(history + later)).set_index("runner_id")
+    # H2 finished last of the two that ran: performance 0.0, not 1 - 1/2 = 0.5
+    assert features.loc[4, "last_finish_norm"] == pytest.approx(0.0)

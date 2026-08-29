@@ -71,14 +71,14 @@ Backtest over 3 fold(s): 3,865 bets, 646 winners (16.7%)
   Curragh 18:30       Horse 0108    11.4%   8.6%   11.49    9.40  +28.3%   0.69  exchange
   Newmarket 14:10     Horse 0170     6.6%   4.2%   18.68   15.88  +23.5%   0.33  HarpBet
   ...
-  9 suggestion(s), 5.11 units staked (1 unit = 1% of bankroll).
+  12 suggestion(s) (1 unit = 1% of bankroll).
 
 [5/6] Running the races and settling
-  Settled 9 suggestion(s): 2 won, 7 lost · P/L +5.86u · mean CLV 1.039
+  Settled 12 suggestion(s): 2 won, 10 lost · P/L +6.88u · mean CLV 1.024
 ```
 
-Nine bets settling at +5.86 units means nothing on its own — that is what
-"mean CLV 1.039" is there for. The bets beat the closing price by about 4%
+Twelve bets settling at +6.88 units means nothing on its own — that is what
+"mean CLV 1.024" is there for. The bets beat the closing price by about 2%
 on average, which is the part that would still be true if the results had
 gone the other way.
 

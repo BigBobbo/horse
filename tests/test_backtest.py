@@ -89,12 +89,25 @@ def test_backtest_folds_are_chronologically_clean(backtest):
 def test_naive_backing_everything_makes_no_money(backtest):
     """Backing every runner at a margin-free closing price is not a strategy.
 
-    It is not asserted to be strictly negative: over tens of thousands of
-    runners the standard error on this figure is still a couple of percent,
-    which is itself the point -- see the variance discussion in
-    docs/research/market-economics.md.
+    Stated as a statistical claim rather than a fixed bound, because that is
+    the only honest way to state it: even over ~35,000 runners the standard
+    error on this figure is around 3 percentage points, which is exactly the
+    variance problem documented in docs/research/market-economics.md. A hard
+    threshold here would be the same mistake the project warns users against.
     """
-    assert backtest.naive_roi() < 0.02
+    returns = backtest.all_runners["naive_pl"].to_numpy(dtype=float)
+    n = len(returns)
+    assert n > 10_000
+    standard_error = returns.std(ddof=1) / np.sqrt(n)
+    naive_roi = backtest.naive_roi()
+
+    # Consistent with no edge: within two standard errors of break-even.
+    assert abs(naive_roi) < 2 * standard_error, (
+        f"backing everything returned {naive_roi:+.2%}, which is more than two "
+        f"standard errors ({standard_error:.2%}) from break-even"
+    )
+    # And nowhere near the value strategy's return.
+    assert backtest.roi() > naive_roi + 0.02
 
 
 def test_value_strategy_beats_naive_baseline(backtest):
@@ -119,8 +132,10 @@ def test_every_bet_cleared_the_filters(backtest, backtest_settings):
     assert (bets["stake"] > 0).all()
 
 
-def test_bets_are_a_subset_of_runners(backtest):
-    assert backtest.n_bets < len(backtest.all_runners)  # most races produce no bet
+def test_bet_rate_is_selective(backtest):
+    """Most runners are not value. A strategy betting everything is not one."""
+    rate = backtest.n_bets / len(backtest.all_runners)
+    assert 0.005 < rate < 0.15, f"bet rate {rate:.1%} is not a selective strategy"
 
 
 # -- reporting --------------------------------------------------------------

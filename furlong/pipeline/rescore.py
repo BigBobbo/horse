@@ -55,40 +55,34 @@ class RescoreOutcome:
         return "\n".join(lines)
 
 
-def _renormalise_race(conn: sqlite3.Connection, race_id: int) -> dict[int, float]:
-    """Redistribute the withdrawn runners' probability across those still standing."""
+def _renormalise_race(conn: sqlite3.Connection, race_id: int,
+                      date: str) -> dict[int, float]:
+    """Redistribute a withdrawn runner's probability across those still standing.
+
+    This reads the *whole* scored card, not just the runners we backed. The
+    horse that comes out is usually one we never suggested, and its released
+    probability still has to go somewhere -- renormalising over our own
+    selections alone would leave their chances unchanged, which is the one
+    thing the 10:15 run exists to prevent.
+    """
     rows = conn.execute(
-        """SELECT s.runner_id, s.blend_prob, r.status
-           FROM suggestions s JOIN runners r ON r.id = s.runner_id
-           WHERE s.race_id = ?""",
-        (race_id,),
+        """SELECT sc.runner_id, sc.blend_prob, r.status
+           FROM race_scores sc JOIN runners r ON r.id = sc.runner_id
+           WHERE sc.race_id = ? AND sc.date = ?""",
+        (race_id, date),
     ).fetchall()
-    # The full race, not just suggested runners, is needed for the denominator.
-    all_rows = conn.execute(
-        """SELECT r.id AS runner_id, r.status FROM runners r WHERE r.race_id = ?""",
-        (race_id,),
-    ).fetchall()
-    suggested = {row["runner_id"]: float(row["blend_prob"]) for row in rows}
-    if not suggested:
+    if not rows:
         return {}
 
-    standing = {row["runner_id"] for row in all_rows if row["status"] != "nonrunner"}
-    withdrawn_prob = sum(
-        prob for runner_id, prob in suggested.items() if runner_id not in standing
-    )
-    # Probability released by withdrawals is shared in proportion to the
-    # remaining runners' existing chances (the standard market convention).
-    remaining_total = sum(
-        prob for runner_id, prob in suggested.items() if runner_id in standing
-    )
-    if remaining_total <= 0:
+    standing = {r["runner_id"]: float(r["blend_prob"])
+                for r in rows if r["status"] != "nonrunner"}
+    total_standing = sum(standing.values())
+    if total_standing <= 0:
         return {}
-    scale = 1.0 + withdrawn_prob / remaining_total if withdrawn_prob else 1.0
-    return {
-        runner_id: min(prob * scale, 0.99)
-        for runner_id, prob in suggested.items()
-        if runner_id in standing
-    }
+    # Standard market convention: the field is renormalised in proportion to
+    # the remaining runners' existing chances.
+    return {runner_id: min(prob / total_standing, 0.99)
+            for runner_id, prob in standing.items()}
 
 
 def run_rescore(settings: Settings, date: str) -> RescoreOutcome:
@@ -119,7 +113,7 @@ def run_rescore(settings: Settings, date: str) -> RescoreOutcome:
     affected_races = {row["race_id"] for row in open_suggestions}
     new_probs: dict[int, float] = {}
     for race_id in affected_races:
-        new_probs.update(_renormalise_race(conn, race_id))
+        new_probs.update(_renormalise_race(conn, race_id, date))
 
     for row in open_suggestions:
         # Our own selection came out: the bet is void, not merely bad.

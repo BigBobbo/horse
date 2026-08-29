@@ -136,9 +136,15 @@ class RacingApiClient:
 
 # -- mapping into the local database ---------------------------------------
 
-def store_racecard(conn: sqlite3.Connection, card: dict,
-                   ts_utc: str | None = None) -> int | None:
-    """Map one racecard dict into races/runners/odds. Returns race_id or None."""
+def store_racecard(conn: sqlite3.Connection, card: dict, ts_utc: str | None = None,
+                   preserve_result: bool = True) -> int | None:
+    """Map one racecard dict into races/runners/odds. Returns race_id or None.
+
+    ``preserve_result`` (the default) makes re-fetching a card harmless: a
+    racecard carries no finishing positions, so overwriting them would erase
+    the results of a race that has already been run and leave its bets
+    permanently unsettleable.
+    """
     country = map_country(card)
     if country is None:
         return None  # only UK+IRE racing is in scope
@@ -166,6 +172,7 @@ def store_racecard(conn: sqlite3.Connection, card: dict,
         race_class=_to_int(_first(card, "race_class", "class")),
         field_size=_to_int(_first(card, "field_size")) or len(card.get("runners", [])),
         status="scheduled",
+        preserve_result=preserve_result,
     ))
 
     ts = ts_utc or datetime.now(timezone.utc).isoformat()
@@ -182,6 +189,7 @@ def store_racecard(conn: sqlite3.Connection, card: dict,
             official_rating=_to_float(_first(runner, "ofr", "or", "official_rating")),
             age=_to_int(_first(runner, "age")),
             status="declared",
+            preserve_result=preserve_result,
         ))
         for quote in runner.get("odds", []) or []:
             price = _to_float(_first(quote, "decimal", "price", "odds_decimal"))
@@ -193,7 +201,8 @@ def store_racecard(conn: sqlite3.Connection, card: dict,
 
 def store_result(conn: sqlite3.Connection, result: dict) -> int | None:
     """Map one result dict onto an existing (or new) race."""
-    race_id = store_racecard(conn, result, ts_utc=None)
+    # A results payload is authoritative: it may overwrite result columns.
+    race_id = store_racecard(conn, result, ts_utc=None, preserve_result=False)
     if race_id is None:
         return None
     conn.execute("UPDATE races SET status='result' WHERE id=?", (race_id,))

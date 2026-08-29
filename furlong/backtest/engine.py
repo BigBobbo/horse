@@ -206,8 +206,17 @@ def _simulate_fold(test: pd.DataFrame, model_probs: np.ndarray, blend_probs: np.
 
     bets: list[dict] = []
     naive: list[dict] = []
+    # A runner with no quoted price carries an inferred probability and a
+    # placeholder "price" that nobody could ever have taken. Betting or
+    # scoring those would manufacture profit out of missing data.
+    priced = (
+        test["market_priced"].to_numpy(dtype=bool) if "market_priced" in test
+        else np.ones(len(test), dtype=bool)
+    )
 
     for i, (_, row) in enumerate(test.iterrows()):
+        if not priced[i]:
+            continue
         price = float(odds[i])
         win = bool(won[i])
         naive_pl = (price - 1.0) * (1 - commission) if win else -1.0

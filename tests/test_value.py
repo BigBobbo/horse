@@ -295,3 +295,86 @@ def test_dead_heat_splits_the_stake():
     out = settle_bet(stake_units=2.0, advised_odds=5.0, won=True, dead_heat_runners=2)
     assert out.result == "deadheat"
     assert out.pl_units == pytest.approx(1.0 * 4.0 - 1.0)
+
+
+# -- regressions from the adversarial review --------------------------------
+
+def test_rule4_applies_to_bookmakers_but_never_to_the_exchange():
+    """Rule 4 is a Tattersalls bookmaker rule; the exchange re-forms instead.
+
+    Also covers the price source: a withdrawn horse has no Betfair SP,
+    precisely because it was withdrawn, so the deduction must come from its
+    last bookmaker snapshot.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from furlong import repo as repo_mod
+    from furlong.db import init_db
+    from furlong.repo import RaceRecord, RunnerRecord
+    from furlong.value.settlement import settle_suggestions
+
+    settings = Settings(data_dir=Path(tempfile.mkdtemp()), exchange_commission=0.0)
+    conn = init_db(settings.database_path)
+
+    outcomes = {}
+    for venue, bookmaker, day in (("exchange", None, "01"), ("book", "GreenBook", "02")):
+        date = f"2026-05-{day}"
+        race_id = repo_mod.upsert_race(conn, RaceRecord(
+            source_id=f"R-{venue}", course="Curragh", country="IRE", date=date,
+            start_time_utc=f"{date}T14:00:00+00:00", race_type="flat",
+            distance_m=1600, going="good", status="result",
+        ))
+        winner = repo_mod.upsert_runner(conn, race_id, RunnerRecord(
+            horse=f"Winner {venue}", status="ran", finish_pos=1, win_flag=1))
+        withdrawn = repo_mod.upsert_runner(conn, race_id, RunnerRecord(
+            horse=f"Withdrawn {venue}", status="nonrunner"))
+        # the withdrawn horse was a short-priced bookmaker favourite, and has
+        # no BSP row because it never ran
+        repo_mod.add_odds_snapshot(conn, withdrawn, "book", f"{date}T09:00:00",
+                                   1.5, "GreenBook")
+        conn.execute(
+            """INSERT INTO suggestions (date, race_id, runner_id, model_prob, blend_prob,
+                   fair_odds, advised_odds, price_floor, venue, bookmaker, ev,
+                   stake_units, status, created_ts)
+               VALUES (?, ?, ?, 0.4, 0.4, 3.0, 5.0, 4.0, ?, ?, 0.5, 1.0, 'open', ?)""",
+            (date, race_id, winner, venue, bookmaker, f"{date}T09:00:00"),
+        )
+        conn.commit()
+        settle_suggestions(settings, date=date)
+        outcomes[venue] = conn.execute(
+            """SELECT t.rule4_deduction, t.pl_units FROM settlements t
+               JOIN suggestions s ON s.id = t.suggestion_id WHERE s.venue = ?""",
+            (venue,),
+        ).fetchone()
+    conn.close()
+
+    assert outcomes["exchange"]["rule4_deduction"] == 0.0
+    assert outcomes["exchange"]["pl_units"] == pytest.approx(4.0)
+    # 1.5 falls in the 0.65 band, so net winnings are cut to 35%
+    assert outcomes["book"]["rule4_deduction"] == pytest.approx(0.65)
+    assert outcomes["book"]["pl_units"] == pytest.approx(4.0 * 0.35)
+
+
+def test_void_bets_carry_no_clv():
+    """A withdrawn runner never had a closing line to beat."""
+    out = settle_bet(stake_units=1.0, advised_odds=6.0, won=False, voided=True, bsp=5.0)
+    assert out.result == "void"
+    assert out.clv is None
+
+
+def test_per_race_cap_limits_mutually_exclusive_bets():
+    from furlong.value.staking import apply_race_cap
+
+    settings = Settings(max_stake_pct=0.02)
+    plans = [stake_for(0.30, 5.0, Settings(kelly_fraction=0.25, max_stake_pct=0.02,
+                                           exchange_commission=0.0))
+             for _ in range(3)]
+    # three qualifiers in the SAME race must not risk 3x the per-bet cap
+    capped = apply_race_cap(plans, [7, 7, 7], settings)
+    assert sum(p.stake_units for p in capped) == pytest.approx(2.0)
+    assert all(p.capped_by == "per_race" for p in capped)
+
+    # spread across different races, each keeps its own stake
+    separate = apply_race_cap(plans, [1, 2, 3], settings)
+    assert sum(p.stake_units for p in separate) == pytest.approx(6.0)

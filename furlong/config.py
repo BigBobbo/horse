@@ -52,6 +52,8 @@ class Settings:
     min_edge: float = 0.05            # minimum EV per unit staked to suggest
     min_prob: float = 0.05            # Bolton-Chapman longshot exclusion
     max_odds: float = 21.0            # never advise above this decimal price
+    max_prob: float = 0.90            # a near-certainty is a data error, not a bet
+    min_field_size: int = 3           # walkovers and stripped cards are not races
 
     # Staking
     kelly_fraction: float = 0.25
@@ -84,11 +86,13 @@ class Settings:
         "min_edge",
         "min_prob",
         "max_odds",
+        "max_prob",
         "kelly_fraction",
         "bankroll_units",
         "max_stake_pct",
         "max_daily_stake_pct",
     }
+    _INT_FIELDS = {"min_field_size"}
     _PATH_FIELDS = {"data_dir", "db_path"}
 
     @classmethod
@@ -111,7 +115,12 @@ class Settings:
             name = key[len(ENV_PREFIX):].lower()
             if name not in valid_names:
                 continue
-            if name in cls._FLOAT_FIELDS:
+            if name in cls._INT_FIELDS:
+                try:
+                    kwargs[name] = int(raw)
+                except ValueError as exc:
+                    raise ConfigError(f"{key} must be a whole number, got {raw!r}") from exc
+            elif name in cls._FLOAT_FIELDS:
                 try:
                     kwargs[name] = float(raw)
                 except ValueError as exc:

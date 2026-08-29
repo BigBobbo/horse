@@ -84,9 +84,15 @@ FEATURE_COLUMNS = [
 ]
 
 
-def _perf(finish_pos: np.ndarray, field_size: np.ndarray) -> np.ndarray:
-    """Normalised performance in [0, 1]: winner 1.0, last 0.0."""
-    denom = np.maximum(field_size - 1, 1)
+def _perf(finish_pos: np.ndarray, runners: np.ndarray) -> np.ndarray:
+    """Normalised performance in [0, 1]: winner 1.0, last 0.0.
+
+    ``runners`` is the number that actually ran, not the declared field.
+    Using the declared field would score the last of ten finishers in a
+    twelve-declared race as 0.18 rather than 0.0, and British withdrawals
+    run at 8-9% of declarations.
+    """
+    denom = np.maximum(runners - 1, 1)
     return 1.0 - (finish_pos - 1) / denom
 
 
@@ -114,6 +120,9 @@ class _EntityStats:
         self._compute()
 
     def _compute(self) -> None:
+        if self.n == 0:
+            self.results = {}
+            return
         order = np.lexsort((self.dates, self.entity))
         out: dict[str, np.ndarray] = {}
         for key in self.values:
@@ -158,12 +167,23 @@ def _last_run_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
     history rows are looked up by date via searchsorted below.
     """
     n = len(df)
+    if n == 0:
+        return pd.DataFrame(
+            {"days_since_run": [], "last_finish_norm": [], "won_last": [],
+             "recent_form": []}, index=df.index,
+        )
     horse = df["horse_id"].to_numpy()
     dates = _date_ints(df["date"])
+    ran_counts = (
+        pd.Series(completed.astype(float), index=df.index)
+        .groupby(df["race_id"]).transform("sum")
+        .to_numpy()
+    )
+    field = df["field_size"].fillna(2).to_numpy(dtype=float)
     perf = np.where(
         completed,
         _perf(df["finish_pos"].fillna(0).to_numpy(dtype=float),
-              df["field_size"].fillna(2).to_numpy(dtype=float)),
+              np.where(ran_counts >= 2, ran_counts, field)),
         np.nan,
     )
     win = np.where(completed, (df["win_flag"].fillna(0) == 1).to_numpy(), False)
@@ -211,15 +231,32 @@ def _last_run_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
 
 
 def _elo_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
-    """Opposition-adjusted ability ratings, updated strictly after each race.
+    """Opposition-adjusted ability ratings, read strictly before each race day.
 
     Multi-runner Elo: each runner's expected win share is the softmax of the
     field's current ratings; after the race every rating moves by
-    ``K * (actual - expected)``. Races are processed in start-time order and
-    a rating is read *before* its own race is applied, so the feature is
-    point-in-time safe by construction.
+    ``K * (actual - expected)``.
+
+    Processing is **two passes per calendar day**: every race on day D reads
+    the ratings as they stood at the end of day D-1, and only then are all of
+    day D's results applied. Updating race by race would let the 16:00 read a
+    trainer rating already containing that trainer's 13:00 winner -- same-day
+    leakage that the rest of this module carefully avoids, and which would
+    also skew training against serving (a live card has no results yet, so
+    the feature would quietly mean something different).
+
+    Races with withdrawals still update the ratings: the update is computed
+    over the runners that actually ran, with expectations renormalised over
+    them. Skipping such races entirely would discard the majority of real
+    racing, since British withdrawals run at 8-9% of declarations.
     """
     n = len(df)
+    if n == 0:
+        return pd.DataFrame(
+            {name: [] for name in
+             ("elo", "elo_vs_field", "elo_rank_pct", "trainer_elo", "jockey_elo")},
+            index=df.index,
+        )
     horse = df["horse_id"].to_numpy()
     trainer = df["trainer_id"].fillna(-1).to_numpy()
     jockey = df["jockey_id"].fillna(-1).to_numpy()
@@ -235,39 +272,57 @@ def _elo_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
     trainer_r: dict = {}
     jockey_r: dict = {}
 
-    order = np.lexsort((df["race_id"].to_numpy(), _date_ints(df["date"])))
+    dates = _date_ints(df["date"])
     race_ids = df["race_id"].to_numpy()
-    start = 0
-    ordered_races = race_ids[order]
-    boundaries = np.flatnonzero(np.diff(ordered_races)) + 1
-    for gs, ge in zip(np.concatenate(([0], boundaries)),
-                      np.concatenate((boundaries, [len(order)]))):
-        idx = order[gs:ge]
-        ratings = np.array([horse_r.get(horse[i], ELO_START) for i in idx])
-        t_ratings = np.array([trainer_r.get(trainer[i], ELO_START) for i in idx])
-        j_ratings = np.array([jockey_r.get(jockey[i], ELO_START) for i in idx])
+    order = np.lexsort((race_ids, dates))
 
-        elo[idx] = ratings
-        elo_vs_field[idx] = ratings - ratings.mean()
-        if len(idx) > 1:
-            ranks = ratings.argsort().argsort()
-            elo_rank_pct[idx] = ranks / (len(idx) - 1)
-        trainer_elo[idx] = t_ratings
-        jockey_elo[idx] = j_ratings
+    ordered_dates = dates[order]
+    day_boundaries = np.flatnonzero(np.diff(ordered_dates)) + 1
+    day_starts = np.concatenate(([0], day_boundaries))
+    day_ends = np.concatenate((day_boundaries, [len(order)]))
 
-        if not completed[idx].all():
-            continue  # declared-only race: nothing to learn from yet
-        expected = _softmax_np(ratings / ELO_SCALE)
-        actual = won[idx]
-        if actual.sum() != 1:
-            continue  # dead heat or missing winner: skip the update
-        delta = ELO_K * (actual - expected)
-        for k, i in enumerate(idx):
-            horse_r[horse[i]] = ratings[k] + delta[k]
-            if trainer[i] != -1:
-                trainer_r[trainer[i]] = t_ratings[k] + ELO_TRAINER_K * (actual[k] - expected[k])
-            if jockey[i] != -1:
-                jockey_r[jockey[i]] = j_ratings[k] + ELO_TRAINER_K * (actual[k] - expected[k])
+    for ds, de in zip(day_starts, day_ends):
+        day_idx = order[ds:de]
+        day_races = race_ids[day_idx]
+        race_boundaries = np.flatnonzero(np.diff(day_races)) + 1
+        race_slices = list(zip(
+            np.concatenate(([0], race_boundaries)),
+            np.concatenate((race_boundaries, [len(day_idx)])),
+        ))
+
+        # Pass 1: read every rating for the day before anything is updated.
+        pending: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        for rs, re_ in race_slices:
+            idx = day_idx[rs:re_]
+            ratings = np.array([horse_r.get(horse[i], ELO_START) for i in idx])
+            t_ratings = np.array([trainer_r.get(trainer[i], ELO_START) for i in idx])
+            j_ratings = np.array([jockey_r.get(jockey[i], ELO_START) for i in idx])
+
+            elo[idx] = ratings
+            elo_vs_field[idx] = ratings - ratings.mean()
+            if len(idx) > 1:
+                elo_rank_pct[idx] = _rank_pct(ratings)
+            trainer_elo[idx] = t_ratings
+            jockey_elo[idx] = j_ratings
+            pending.append((idx, ratings, t_ratings, j_ratings))
+
+        # Pass 2: apply the day's results.
+        for idx, ratings, t_ratings, j_ratings in pending:
+            ran = completed[idx]
+            if ran.sum() < 2:
+                continue  # nothing to learn from a walkover or an unrun card
+            actual = won[idx][ran]
+            if actual.sum() != 1:
+                continue  # dead heat or missing winner: no clean update
+            expected = _softmax_np(ratings[ran] / ELO_SCALE)
+            delta = ELO_K * (actual - expected)
+            connection_delta = ELO_TRAINER_K * (actual - expected)
+            for k, i in enumerate(idx[ran]):
+                horse_r[horse[i]] = ratings[ran][k] + delta[k]
+                if trainer[i] != -1:
+                    trainer_r[trainer[i]] = t_ratings[ran][k] + connection_delta[k]
+                if jockey[i] != -1:
+                    jockey_r[jockey[i]] = j_ratings[ran][k] + connection_delta[k]
 
     return pd.DataFrame({
         "elo": elo / ELO_SCALE,
@@ -276,6 +331,24 @@ def _elo_features(df: pd.DataFrame, completed: np.ndarray) -> pd.DataFrame:
         "trainer_elo": trainer_elo / ELO_SCALE,
         "jockey_elo": jockey_elo / ELO_SCALE,
     }, index=df.index)
+
+
+def _rank_pct(values: np.ndarray) -> np.ndarray:
+    """Rank in [0, 1] using average ranks, so ties share a position.
+
+    A race of unraced horses all sit at the starting rating; ordinal ranking
+    would hand them 0, 1/(n-1), ... purely by their order on the card.
+    """
+    order = values.argsort(kind="stable")
+    ranks = np.empty(len(values), dtype=float)
+    ranks[order] = np.arange(len(values), dtype=float)
+    # average the ranks within each group of equal values
+    unique_values, inverse = np.unique(values, return_inverse=True)
+    for group in range(len(unique_values)):
+        mask = inverse == group
+        if mask.sum() > 1:
+            ranks[mask] = ranks[mask].mean()
+    return ranks / (len(values) - 1)
 
 
 def _softmax_np(x: np.ndarray) -> np.ndarray:
@@ -294,13 +367,27 @@ def compute_features(runs: pd.DataFrame) -> pd.DataFrame:
     """
     df = runs.reset_index(drop=True).copy()
     n = len(df)
+    if n == 0:
+        # An empty history is a normal state on day one, not an error.
+        return pd.DataFrame(columns=[
+            "runner_id", "race_id", "horse_id", "date", "start_time_utc",
+            "win_flag", "finish_pos", "status", "country", *FEATURE_COLUMNS,
+        ])
     completed = (
         df["finish_pos"].notna() & (df["status"] == "ran") & df["field_size"].notna()
     ).to_numpy()
 
     finish = df["finish_pos"].fillna(0).to_numpy(dtype=float)
     field = df["field_size"].fillna(2).to_numpy(dtype=float)
-    perf = _perf(finish, field)
+    # Runners that actually ran, per race — the correct denominator for
+    # normalised performance (see _perf).
+    ran_counts = (
+        pd.Series(completed.astype(float), index=df.index)
+        .groupby(df["race_id"]).transform("sum")
+        .to_numpy()
+    )
+    ran_counts = np.where(ran_counts >= 2, ran_counts, field)
+    perf = _perf(finish, ran_counts)
     win = (df["win_flag"].fillna(0) == 1).to_numpy(dtype=float)
     placed = (df["finish_pos"].fillna(99) <= 3).to_numpy(dtype=float)
 

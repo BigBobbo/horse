@@ -78,7 +78,10 @@ def settle_bet(stake_units: float, advised_odds: float, won: bool,
     clv = (advised_odds / bsp) if (bsp and bsp > 1.0) else None
 
     if voided:
-        return BetOutcome(result="void", pl_units=0.0, clv=clv, rule4_deduction=0.0)
+        # A withdrawn runner has no closing line to have beaten, so it
+        # contributes no CLV -- counting it would dilute the one metric that
+        # converges fast enough to be worth watching.
+        return BetOutcome(result="void", pl_units=0.0, clv=None, rule4_deduction=0.0)
 
     if not won:
         return BetOutcome(result="lost", pl_units=-stake_units, clv=clv,
@@ -146,14 +149,22 @@ def settle_suggestions(settings: Settings, date: str | None = None) -> Settlemen
         if row["race_status"] != "result":
             continue  # race has not been run yet
 
-        # Rule 4: withdrawals in this race that were priced before the off.
-        withdrawn = conn.execute(
-            """SELECT b.bsp FROM runners r
-               LEFT JOIN bsp_prices b ON b.runner_id = r.id AND b.market='win'
-               WHERE r.race_id = ? AND r.status = 'nonrunner'""",
-            (row["race_id"],),
-        ).fetchall()
-        rule4 = combined_rule4([w["bsp"] for w in withdrawn if w["bsp"]])
+        # Rule 4 is a Tattersalls *bookmaker* rule: the exchange voids and
+        # re-forms the market instead, so an exchange bet is never deducted.
+        # The withdrawn horse's price comes from the last odds snapshot taken
+        # before it came out -- it has no Betfair SP, precisely because it
+        # was withdrawn from the market.
+        rule4 = 0.0
+        if row["venue"] == "book":
+            withdrawn = conn.execute(
+                """SELECT (SELECT o.odds_decimal FROM odds_snapshots o
+                           WHERE o.runner_id = r.id AND o.venue = 'book'
+                           ORDER BY o.ts_utc DESC LIMIT 1) AS last_price
+                   FROM runners r
+                   WHERE r.race_id = ? AND r.status = 'nonrunner'""",
+                (row["race_id"],),
+            ).fetchall()
+            rule4 = combined_rule4([w["last_price"] for w in withdrawn if w["last_price"]])
 
         dead_heat = conn.execute(
             "SELECT COUNT(*) n FROM runners WHERE race_id=? AND finish_pos=1",

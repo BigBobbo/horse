@@ -84,8 +84,22 @@ def chronological_splits(dataset: Dataset, train_frac: float = 0.6,
     ].index
     test_races = race_date_map[race_date_map > valid_end + gap].index
 
-    return Splits(
+    splits = Splits(
         train=frame.index[frame["race_id"].isin(train_races)],
         valid=frame.index[frame["race_id"].isin(valid_races)],
         test=frame.index[frame["race_id"].isin(test_races)],
     )
+    # The purge gaps can swallow a short history entirely, leaving an empty
+    # validation or test segment. That surfaces far downstream as a division
+    # by zero inside the metrics, so say what is actually wrong here.
+    empty = [name for name in ("train", "valid", "test")
+             if len(getattr(splits, name)) == 0]
+    if empty:
+        span = pd.to_datetime(race_dates.values)
+        days = (span.max() - span.min()).days
+        raise ValueError(
+            f"not enough racing history to split: {', '.join(empty)} segment(s) are "
+            f"empty over {n_races} races spanning {days} days. Import more history "
+            f"(the purge gap alone is {purge_days} days at each boundary)."
+        )
+    return splits

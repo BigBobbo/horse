@@ -43,6 +43,9 @@ class RaceRecord:
     race_class: int | None = None
     field_size: int | None = None
     status: str = "scheduled"
+    # As for RunnerRecord: a racecard re-fetch must not downgrade a race
+    # that has already been run back to 'scheduled'.
+    preserve_result: bool = False
 
 
 @dataclass
@@ -58,6 +61,11 @@ class RunnerRecord:
     finish_pos: int | None = None
     beaten_lengths: float | None = None
     win_flag: int | None = None
+    # When True, an update leaves the result columns (status, finish_pos,
+    # beaten_lengths, win_flag) as they already stand. Racecard feeds carry
+    # no result, so re-fetching today's card after racing would otherwise
+    # wipe the finishing positions and strand the bets unsettleable.
+    preserve_result: bool = False
 
 
 def upsert_race(conn: sqlite3.Connection, race: RaceRecord) -> int:
@@ -67,11 +75,18 @@ def upsert_race(conn: sqlite3.Connection, race: RaceRecord) -> int:
     ).fetchone()
     if existing:
         race_id = int(existing["id"])
+        status = race.status
+        if race.preserve_result:
+            current = conn.execute(
+                "SELECT status FROM races WHERE id=?", (race_id,)
+            ).fetchone()["status"]
+            if current == "result":
+                status = "result"
         conn.execute(
             """UPDATE races SET course_id=?, date=?, start_time_utc=?, race_type=?,
                distance_m=?, going=?, race_class=?, field_size=?, status=? WHERE id=?""",
             (course_id, race.date, race.start_time_utc, race.race_type, race.distance_m,
-             race.going, race.race_class, race.field_size, race.status, race_id),
+             race.going, race.race_class, race.field_size, status, race_id),
         )
         return race_id
     cur = conn.execute(
@@ -97,12 +112,20 @@ def upsert_runner(conn: sqlite3.Connection, race_id: int, runner: RunnerRecord) 
     )
     if existing:
         runner_id = int(existing["id"])
-        conn.execute(
-            """UPDATE runners SET trainer_id=?, jockey_id=?, draw=?, weight_lbs=?,
-               official_rating=?, age=?, status=?, finish_pos=?, beaten_lengths=?,
-               win_flag=? WHERE id=?""",
-            (*values, runner_id),
-        )
+        if runner.preserve_result:
+            conn.execute(
+                """UPDATE runners SET trainer_id=?, jockey_id=?, draw=?, weight_lbs=?,
+                   official_rating=?, age=? WHERE id=?""",
+                (trainer_id, jockey_id, runner.draw, runner.weight_lbs,
+                 runner.official_rating, runner.age, runner_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE runners SET trainer_id=?, jockey_id=?, draw=?, weight_lbs=?,
+                   official_rating=?, age=?, status=?, finish_pos=?, beaten_lengths=?,
+                   win_flag=? WHERE id=?""",
+                (*values, runner_id),
+            )
         return runner_id
     cur = conn.execute(
         """INSERT INTO runners (race_id, horse_id, trainer_id, jockey_id, draw, weight_lbs,

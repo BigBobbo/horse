@@ -67,8 +67,8 @@ def test_no_horse_runs_twice_on_the_same_day(daily_settings):
 
 # -- the daily run ----------------------------------------------------------
 
-def test_daily_produces_suggestions(daily_outcome):
-    assert daily_outcome.date == daily_outcome.date
+def test_daily_produces_suggestions(daily_outcome, daily_settings):
+    assert daily_outcome.date == _open_card_date(daily_settings)
     assert daily_outcome.races_considered > 0
     assert daily_outcome.runners_considered > 0
     assert len(daily_outcome.suggestions) == len(daily_outcome.stakes)
@@ -208,40 +208,66 @@ def test_rescore_voids_a_withdrawn_selection(daily_settings, daily_outcome):
     assert "VOID" in outcome.render_terminal()
 
 
-def test_rescore_raises_probabilities_of_survivors(daily_settings, daily_outcome):
-    """Removing a rival must increase the remaining runners' chances."""
+def test_rescore_raises_probabilities_when_an_unbacked_rival_comes_out(
+        daily_settings, daily_outcome):
+    """The withdrawn horse is usually one we never backed.
+
+    Renormalising over our own selections alone would leave their chances
+    untouched, which is exactly what the 10:15 run exists to prevent.
+    """
     suggestion = daily_outcome.suggestions[0]
     conn = init_db(daily_settings.database_path)
+    # pick a rival in the same race that carries NO suggestion of its own
     rival = conn.execute(
-        """SELECT r.id FROM runners r WHERE r.race_id=? AND r.id != ? AND r.status='declared'
+        """SELECT r.id FROM runners r
+           WHERE r.race_id = ? AND r.id != ? AND r.status = 'declared'
+             AND r.id NOT IN (SELECT runner_id FROM suggestions WHERE date = ?)
            LIMIT 1""",
-        (suggestion.race_id, suggestion.runner_id),
+        (suggestion.race_id, suggestion.runner_id, daily_outcome.date),
     ).fetchone()
+    assert rival is not None, "expected an unbacked rival in the race"
+
     before = conn.execute(
-        "SELECT blend_prob FROM suggestions WHERE runner_id=?", (suggestion.runner_id,)
-    ).fetchone()["blend_prob"]
+        "SELECT blend_prob, ev FROM suggestions WHERE runner_id=? AND date=?",
+        (suggestion.runner_id, daily_outcome.date),
+    ).fetchone()
     conn.execute("UPDATE runners SET status='nonrunner' WHERE id=?", (rival["id"],))
     conn.commit()
     conn.close()
 
-    run_rescore(daily_settings, date=daily_outcome.date)
+    outcome = run_rescore(daily_settings, date=daily_outcome.date)
 
     conn = init_db(daily_settings.database_path)
     after = conn.execute(
-        "SELECT blend_prob FROM suggestions WHERE runner_id=?", (suggestion.runner_id,)
-    ).fetchone()["blend_prob"]
+        "SELECT blend_prob, ev, price_floor FROM suggestions WHERE runner_id=? AND date=?",
+        (suggestion.runner_id, daily_outcome.date),
+    ).fetchone()
     conn.execute("UPDATE runners SET status='declared' WHERE id=?", (rival["id"],))
     conn.commit()
     conn.close()
-    assert after >= before
+
+    assert outcome.repriced >= 1, "no suggestion was repriced by the withdrawal"
+    assert after["blend_prob"] > before["blend_prob"] + 1e-9
+    assert after["ev"] > before["ev"] + 1e-9
+    # a stronger chance means the bet still stands at a shorter price
+    assert after["price_floor"] < suggestion.price_floor + 1e-9
+
+    # restore the pre-test probabilities for the other tests in this module
+    run_rescore(daily_settings, date=daily_outcome.date)
 
 
-def test_rescore_withdraws_suggestions_whose_edge_collapsed(daily_settings, daily_outcome):
+def test_rescore_withdraws_suggestions_whose_edge_collapsed(daily_settings,
+                                                            daily_outcome):
     """A suggestion that no longer clears min_edge must be pulled, with a reason."""
     suggestion = daily_outcome.suggestions[-1]
     conn = init_db(daily_settings.database_path)
+    original = conn.execute(
+        "SELECT blend_prob FROM race_scores WHERE runner_id=? AND date=?",
+        (suggestion.runner_id, daily_outcome.date),
+    ).fetchone()["blend_prob"]
+    # collapse the scored probability: the value is gone
     conn.execute(
-        "UPDATE suggestions SET blend_prob=0.02, ev=0.0 WHERE runner_id=? AND date=?",
+        "UPDATE race_scores SET blend_prob=0.001 WHERE runner_id=? AND date=?",
         (suggestion.runner_id, daily_outcome.date),
     )
     conn.commit()
@@ -254,10 +280,33 @@ def test_rescore_withdraws_suggestions_whose_edge_collapsed(daily_settings, dail
         "SELECT status, reason FROM suggestions WHERE runner_id=? AND date=?",
         (suggestion.runner_id, daily_outcome.date),
     ).fetchone()
+    # restore state for the other tests in this module
+    conn.execute("UPDATE race_scores SET blend_prob=? WHERE runner_id=? AND date=?",
+                 (original, suggestion.runner_id, daily_outcome.date))
+    conn.execute(
+        "UPDATE suggestions SET status='open', reason=NULL WHERE runner_id=? AND date=?",
+        (suggestion.runner_id, daily_outcome.date),
+    )
+    conn.commit()
     conn.close()
+
     assert row["status"] == "withdrawn"
     assert "edge fell" in row["reason"]
     assert any(w["runner_id"] == suggestion.runner_id for w in outcome.withdrawn)
+
+
+def test_daily_persists_the_whole_scored_card(daily_settings, daily_outcome):
+    """Every runner is scored, not only the ones worth backing."""
+    conn = init_db(daily_settings.database_path)
+    scored = conn.execute(
+        "SELECT COUNT(*) n FROM race_scores WHERE date=?", (daily_outcome.date,)
+    ).fetchone()["n"]
+    suggested = conn.execute(
+        "SELECT COUNT(*) n FROM suggestions WHERE date=?", (daily_outcome.date,)
+    ).fetchone()["n"]
+    conn.close()
+    assert scored == daily_outcome.runners_considered
+    assert scored > suggested
 
 
 def test_rescore_with_no_open_suggestions(daily_settings):
@@ -289,3 +338,53 @@ def test_blend_is_fitted_against_the_market_it_will_face(daily_settings):
     merged = scored.merge(expected, on="runner_id", suffixes=("", "_expected"))
     assert (merged["market_source"] != "bsp").all(), "BSP cannot exist pre-race"
     assert merged["market_prob"].sub(merged["market_prob_expected"]).abs().max() < 1e-9
+
+
+# -- degenerate inputs ------------------------------------------------------
+
+def test_first_day_of_data_fails_with_a_clear_message(settings):
+    """No history is a normal day-one state, not an IndexError."""
+    from furlong.db import init_db
+    from furlong.repo import RaceRecord, RunnerRecord
+    from furlong import repo as repo_mod
+    from furlong.pipeline.daily import score_date
+
+    conn = init_db(settings.database_path)
+    race_id = repo_mod.upsert_race(conn, RaceRecord(
+        source_id="R1", course="Curragh", country="IRE", date="2026-05-01",
+        start_time_utc="2026-05-01T14:00:00+00:00", race_type="flat",
+        distance_m=1600, going="good", status="scheduled",
+    ))
+    for name in ("A", "B", "C"):
+        repo_mod.upsert_runner(conn, race_id, RunnerRecord(horse=name))
+    conn.commit()
+
+    with pytest.raises(ValueError, match="no completed races before"):
+        score_date(settings, conn, "2026-05-01")
+    conn.close()
+
+
+def test_walkover_is_never_advised_as_a_certainty(daily_settings, daily_outcome):
+    """A one-runner race scores its runner at 100%; that is a bug, not a bet."""
+    conn = init_db(daily_settings.database_path)
+    # strip a race down to a single standing runner
+    race_id = daily_outcome.suggestions[0].race_id
+    rivals = conn.execute(
+        "SELECT id FROM runners WHERE race_id=? ORDER BY id", (race_id,)
+    ).fetchall()
+    keep = rivals[0]["id"]
+    for row in rivals[1:]:
+        conn.execute("UPDATE runners SET status='nonrunner' WHERE id=?", (row["id"],))
+    conn.commit()
+    conn.close()
+
+    outcome = run_daily(daily_settings, date=daily_outcome.date, dry_run=True)
+
+    conn = init_db(daily_settings.database_path)
+    for row in rivals[1:]:
+        conn.execute("UPDATE runners SET status='declared' WHERE id=?", (row["id"],))
+    conn.commit()
+    conn.close()
+
+    assert all(s.race_id != race_id for s in outcome.suggestions)
+    assert all(s.blend_prob <= daily_settings.max_prob for s in outcome.suggestions)

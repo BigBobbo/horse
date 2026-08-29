@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS model_runs (
     artifact_path TEXT
 );
 
+-- Every runner scored on a race day, not only the ones worth backing.
+-- The 10:15 rescore needs the whole race to renormalise probabilities when a
+-- horse comes out, and most withdrawals are of horses we never backed.
+CREATE TABLE IF NOT EXISTS race_scores (
+    date TEXT NOT NULL,
+    race_id INTEGER NOT NULL REFERENCES races(id),
+    runner_id INTEGER NOT NULL REFERENCES runners(id),
+    model_prob REAL NOT NULL,
+    blend_prob REAL NOT NULL,
+    market_prob REAL,
+    PRIMARY KEY (date, runner_id)
+);
+CREATE INDEX IF NOT EXISTS idx_race_scores_race ON race_scores(race_id);
+
 CREATE TABLE IF NOT EXISTS suggestions (
     id INTEGER PRIMARY KEY,
     date TEXT NOT NULL,

@@ -27,6 +27,29 @@ from furlong.backtest.engine import BacktestResult
 MIN_BETS_FOR_SIGNIFICANCE = 100
 
 
+def json_safe(value):
+    """Recursively replace non-finite floats with None.
+
+    NaN is a normal outcome here -- the mean CLV of bets with no Betfair SP
+    yet, the standard error of a single bet -- but it is not valid JSON, and
+    Starlette serialises with allow_nan=False, so leaving it in returns a
+    500 from the API and writes report files no strict parser will read.
+    """
+    import math
+
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    if isinstance(value, np.floating):
+        return json_safe(float(value))
+    if isinstance(value, np.integer):
+        return int(value)
+    return value
+
+
 def is_significant(roi: float, standard_error: float, n_bets: int) -> bool:
     """Two-standard-error test, with sample-size and zero-variance guards."""
     if n_bets < MIN_BETS_FOR_SIGNIFICANCE:
@@ -110,7 +133,8 @@ def write_report(result: BacktestResult, out_dir: str | Path) -> dict[str, str]:
     metrics = compute_metrics(result)
 
     json_path = out / "backtest.json"
-    json_path.write_text(json.dumps(metrics, indent=2, default=str))
+    json_path.write_text(json.dumps(json_safe(metrics), indent=2, default=str,
+                                    allow_nan=False))
 
     if not result.bets.empty:
         result.bets.to_csv(out / "backtest_bets.csv", index=False)

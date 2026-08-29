@@ -31,6 +31,10 @@ def uniform_log_likelihood(group_sizes: np.ndarray) -> float:
 
 def mcfadden_r2(probs: np.ndarray, y: np.ndarray, group_sizes: np.ndarray) -> float:
     null_ll = uniform_log_likelihood(group_sizes)
+    if null_ll == 0:
+        # No races, or every race a one-runner walkover: the naive model is
+        # already perfect, so there is no explanatory power to measure.
+        return float("nan")
     return 1.0 - log_likelihood(probs, y) / null_ll
 
 

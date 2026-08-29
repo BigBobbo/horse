@@ -8,7 +8,10 @@ commission. Bets are only suggested when they clear all three filters:
 * ``min_prob``   — Bolton & Chapman's longshot exclusion. Relative
   probability errors are largest on longshots, and the favourite-longshot
   bias means bookmaker prices there are the worst value in racing;
-* ``max_odds``   — a hard ceiling, for the same reason.
+* ``max_odds``   — a hard ceiling, for the same reason;
+* ``max_prob``   — a sanity ceiling. A runner priced at near-certainty means
+  a walkover or a mis-parsed card, and a "100% chance" bet is a bug report,
+  not an opportunity.
 
 Each suggestion carries a **price floor**: the shortest price at which the
 bet still clears ``min_edge``. Advised prices decay within minutes of
@@ -146,6 +149,10 @@ def find_value(frame: pd.DataFrame, odds_frame: pd.DataFrame,
         row = info.loc[runner_id]
         prob = float(row["blend_prob"])
         if prob < settings.min_prob:
+            continue
+        # A near-certainty means the race has been stripped to one runner, or
+        # the card parsed badly -- not that we have found a free bet.
+        if prob > settings.max_prob:
             continue
 
         eligible = group[group["odds_decimal"] <= settings.max_odds]

@@ -62,6 +62,34 @@ def flat_stake(settings: Settings, units: float = 1.0) -> StakePlan:
                      capped_by=None)
 
 
+def apply_race_cap(plans: list[StakePlan], race_ids: list, settings: Settings
+                   ) -> list[StakePlan]:
+    """Cap the total staked on any one race at the per-bet limit.
+
+    Runners in the same race are mutually exclusive, so staking each as an
+    independent Kelly bet over-commits: three qualifiers in one race would
+    risk three times the intended fraction on a single outcome.
+    """
+    cap_units = settings.max_stake_pct / UNIT_FRACTION
+    totals: dict = {}
+    for plan, race_id in zip(plans, race_ids):
+        totals[race_id] = totals.get(race_id, 0.0) + plan.stake_units
+
+    out: list[StakePlan] = []
+    for plan, race_id in zip(plans, race_ids):
+        total = totals[race_id]
+        if total <= cap_units or total <= 0:
+            out.append(plan)
+            continue
+        scale = cap_units / total
+        out.append(StakePlan(
+            stake_units=plan.stake_units * scale,
+            kelly_fraction_of_bank=plan.kelly_fraction_of_bank * scale,
+            capped_by="per_race",
+        ))
+    return out
+
+
 def apply_daily_cap(plans: list[StakePlan], settings: Settings) -> list[StakePlan]:
     """Scale a day's stakes down proportionally if they breach the daily cap."""
     total_units = sum(plan.stake_units for plan in plans)

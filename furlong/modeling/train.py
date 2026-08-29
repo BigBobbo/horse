@@ -47,9 +47,10 @@ def _group_sizes(frame: pd.DataFrame) -> np.ndarray:
 
 
 def attach_market(conn: sqlite3.Connection, frame: pd.DataFrame,
-                  prefer: str = "bsp") -> pd.DataFrame:
-    """Add market_prob/market_odds/market_source columns to a feature frame."""
-    market = market_probabilities(conn, frame, prefer=prefer)
+                  prefer: str = "bsp",
+                  allowed: tuple[str, ...] | None = None) -> pd.DataFrame:
+    """Add market probability columns to a feature frame."""
+    market = market_probabilities(conn, frame, prefer=prefer, allowed=allowed)
     merged = frame.merge(market, on="runner_id", how="left", validate="one_to_one")
     if merged["market_prob"].isna().any():
         raise RuntimeError("market probabilities missing for some runners")
@@ -72,20 +73,43 @@ def fit_model(kind: str, train: pd.DataFrame, valid: pd.DataFrame) -> object:
     raise ValueError(f"unknown model kind {kind!r}: expected 'gbm' or 'logit'")
 
 
+def _split_validation(valid: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split the validation window in two on a date boundary.
+
+    The first half stops the boosting; the second fits the blend. Sharing one
+    set does both jobs badly: the model's probabilities on its own
+    early-stopping set are optimistically biased, so alpha -- the weight the
+    blend puts on the model against the market -- comes out too high, and
+    alpha is what actually prices every bet.
+    """
+    if valid.empty:
+        return valid, valid
+    dates = sorted(valid["date"].unique())
+    if len(dates) < 2:
+        return valid, valid
+    cut = max(1, len(dates) // 2)
+    early_stop = valid[valid["date"].isin(set(dates[:cut]))]
+    blend_fit = valid[valid["date"].isin(set(dates[cut:]))]
+    if early_stop.empty or blend_fit.empty:
+        return valid, valid
+    return early_stop, blend_fit
+
+
 def train_on_frames(train: pd.DataFrame, valid: pd.DataFrame, test: pd.DataFrame,
                     kind: str = "gbm") -> TrainedModel:
-    """Fit the model on train, the blend on valid, and evaluate on test."""
-    model = fit_model(kind, train, valid)
+    """Fit the model on train, the blend on held-out validation, evaluate on test."""
+    early_stop, blend_fit = _split_validation(valid)
+    model = fit_model(kind, train, early_stop)
 
-    groups_valid = _group_sizes(valid)
-    valid_model_probs = model.predict_proba(
-        valid[FEATURE_COLUMNS].to_numpy(dtype=float), groups_valid
+    groups_blend = _group_sizes(blend_fit)
+    blend_model_probs = model.predict_proba(
+        blend_fit[FEATURE_COLUMNS].to_numpy(dtype=float), groups_blend
     )
     blend = fit_blend(
-        valid_model_probs,
-        valid["market_prob"].to_numpy(dtype=float),
-        (valid["win_flag"] == 1).to_numpy(dtype=float),
-        groups_valid,
+        blend_model_probs,
+        blend_fit["market_prob"].to_numpy(dtype=float),
+        (blend_fit["win_flag"] == 1).to_numpy(dtype=float),
+        groups_blend,
     )
 
     groups_test = _group_sizes(test)

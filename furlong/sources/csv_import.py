@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import date as date_cls
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -73,6 +74,14 @@ def _to_int(value) -> int | None:
     return int(f) if f is not None else None
 
 
+def _iso_date(raw: str) -> str | None:
+    """Accept only unambiguous ISO dates."""
+    try:
+        return date_cls.fromisoformat(raw).isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
 def _norm_country(raw: str | None) -> str | None:
     text = (raw or "").strip().upper()
     if text in ("IRE", "IRELAND", "IE"):
@@ -115,9 +124,21 @@ def import_results_csv(settings: Settings, path: str | Path,
                 column = mapping.get(name)
                 return row.get(column) if column else None
 
-            date = (col("date") or "").strip()[:10]
+            raw_date = (col("date") or "").strip()[:10]
+            date = _iso_date(raw_date)
             course = (col("course") or "").strip()
             horse = (col("horse") or "").strip()
+            if raw_date and date is None:
+                # An unparseable or ambiguous date is worse than a missing one:
+                # "01/03/2024" would be read as 3 January and silently corrupt
+                # the chronology every split and purge gap depends on.
+                result.skipped += 1
+                if len(result.errors) < 20:
+                    result.errors.append(
+                        f"line {line_no}: date {raw_date!r} is not ISO format "
+                        "(YYYY-MM-DD)"
+                    )
+                continue
             country = _norm_country(col("country")) or ("IRE" if course in IRISH_COURSES else "GB")
             if not date or not course or not horse:
                 result.skipped += 1

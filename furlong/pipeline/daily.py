@@ -41,6 +41,16 @@ from furlong import repo
 
 PUBLISH_LOCAL_TIME = "09:00"
 
+# The blend must be fitted against the same kind of price it will be applied
+# to. Betfair SP is the sharpest market in the data, but it does not exist
+# when the daily run happens -- live suggestions are priced against the
+# morning exchange, which is materially softer. Fitting alpha and beta on
+# BSP and applying them to morning prices systematically underweights the
+# model: measured on the synthetic world, alpha fitted on BSP is 0.195
+# against 0.273 fitted on morning prices, and the corresponding information
+# gain over the market is +0.0015 against +0.0042.
+LIVE_MARKET_SOURCE = "exchange"
+
 
 @dataclass
 class DailyOutcome:
@@ -128,7 +138,7 @@ def score_date(settings: Settings, conn: sqlite3.Connection, date: str,
     history = build_dataset(conn, where="ra.date < ?", params=(date,))
     if history.frame.empty:
         raise ValueError(f"no completed races before {date} to train on")
-    history_frame = attach_market(conn, history.frame, prefer="bsp")
+    history_frame = attach_market(conn, history.frame, prefer=LIVE_MARKET_SOURCE)
 
     dates = sorted(history_frame["date"].unique())
     split_idx = max(1, int(len(dates) * 0.85))
@@ -147,7 +157,7 @@ def score_date(settings: Settings, conn: sqlite3.Connection, date: str,
         return today
 
     today = today.sort_values(["start_time_utc", "race_id", "runner_id"]).reset_index(drop=True)
-    market = market_probabilities(conn, today, prefer="exchange")
+    market = market_probabilities(conn, today, prefer=LIVE_MARKET_SOURCE)
     today = today.merge(market, on="runner_id", how="left", validate="one_to_one")
 
     trained = train_on_frames(train, valid, valid, kind=model_kind)

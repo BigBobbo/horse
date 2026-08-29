@@ -106,9 +106,10 @@ def test_performance_metrics_are_consistent(settled_world):
     assert metrics["strike_rate"] == pytest.approx(
         metrics["n_won"] / metrics["n_settled"]
     )
-    # monthly profits must sum to the headline figure
+    # Monthly profits must sum to the headline figure. The tolerance allows
+    # for the 5-decimal rounding applied to the per-month rows for display.
     monthly_total = sum(row["profit"] for row in metrics["monthly"])
-    assert monthly_total == pytest.approx(metrics["profit_units"], abs=1e-6)
+    assert monthly_total == pytest.approx(metrics["profit_units"], abs=1e-4)
     # the cumulative series must end at the same place
     assert metrics["cumulative"][-1]["cumulative_pl"] == pytest.approx(
         metrics["profit_units"], abs=1e-4

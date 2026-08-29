@@ -263,3 +263,29 @@ def test_rescore_withdraws_suggestions_whose_edge_collapsed(daily_settings, dail
 def test_rescore_with_no_open_suggestions(daily_settings):
     outcome = run_rescore(daily_settings, date="2019-01-01")
     assert "No open suggestions" in outcome.message
+
+
+def test_blend_is_fitted_against_the_market_it_will_face(daily_settings):
+    """The live market is the morning exchange, not Betfair SP.
+
+    BSP does not exist when the daily run happens. Fitting the blend on BSP
+    (a sharper market) and applying it to morning prices would systematically
+    underweight the model, so the history used to fit the blend must be
+    priced from the same source the suggestions are priced against.
+    """
+    from furlong.db import init_db
+    from furlong.modeling.market import market_probabilities
+    from furlong.pipeline.daily import LIVE_MARKET_SOURCE, score_date
+
+    assert LIVE_MARKET_SOURCE == "exchange"
+
+    conn = init_db(daily_settings.database_path)
+    date = _open_card_date(daily_settings)
+    scored = score_date(daily_settings, conn, date)
+    # today's runners must be priced from the live source
+    expected = market_probabilities(conn, scored, prefer=LIVE_MARKET_SOURCE)
+    conn.close()
+
+    merged = scored.merge(expected, on="runner_id", suffixes=("", "_expected"))
+    assert (merged["market_source"] != "bsp").all(), "BSP cannot exist pre-race"
+    assert merged["market_prob"].sub(merged["market_prob_expected"]).abs().max() < 1e-9

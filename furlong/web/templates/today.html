@@ -37,7 +37,7 @@ available odds. Ranked by expected value.</p>
     <thead><tr>
       <th>Off</th><th>Race</th><th>Runner</th>
       <th class="num">Model</th><th class="num">Market</th>
-      <th class="num">Fair</th><th class="num">Advised</th><th class="num">Floor</th>
+      <th class="num">Advised</th><th class="num">Floor</th>
       <th class="num">Edge</th><th class="num">Stake</th><th>Take at</th><th>Status</th>
     </tr></thead>
     <tbody>
@@ -49,7 +49,6 @@ available odds. Ranked by expected value.</p>
         <td>{{ s.horse }}</td>
         <td class="num">{{ "%.1f%%"|format(s.blend_prob * 100) }}</td>
         <td class="num">{{ "%.1f%%"|format(s.market_prob * 100) if s.market_prob else "—" }}</td>
-        <td class="num">{{ "%.2f"|format(s.fair_odds) }}</td>
         <td class="num"><strong>{{ "%.2f"|format(s.advised_odds) }}</strong></td>
         <td class="num">{{ "%.2f"|format(s.price_floor) }}</td>
         <td class="num pos">{{ "%+.1f%%"|format(s.ev * 100) }}</td>

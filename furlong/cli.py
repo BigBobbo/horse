@@ -46,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="report detected files and columns without importing")
     p.add_argument("--years", nargs="*", help="only these years (e.g. 2015 2016)")
 
+    p = sub.add_parser("import-raceform",
+                       help="Import an rpscrape-schema SQLite database (raceform.db)")
+    p.add_argument("path", help="path to raceform.db")
+    p.add_argument("--inspect", action="store_true",
+                   help="report the database's shape without importing")
+    p.add_argument("--since", help="only races on or after this ISO date")
+    p.add_argument("--until", help="only races on or before this ISO date")
+
     p = sub.add_parser("train", help="Train models and fit the market blend")
     p.add_argument("--model", choices=["gbm", "logit"], default="gbm")
 
@@ -161,6 +169,27 @@ def main(argv: list[str] | None = None) -> int:
 
         result = import_kaggle_dataset(settings, args.directory,
                                        years=tuple(args.years) if args.years else None)
+        print(result.summary())
+        return 0 if result.races else 1
+
+    if args.command == "import-raceform":
+        from furlong.sources.raceform_db import import_raceform_db, inspect
+
+        if args.inspect:
+            report = inspect(args.path)
+            if not report.get("columns"):
+                print(f"No 'data' table found in {args.path}", file=sys.stderr)
+                return 1
+            print(f"{report['rows']:,} runner rows across {report['races']:,} races, "
+                  f"{report['first']} to {report['last']}")
+            print(f"columns: {', '.join(report['columns'])}")
+            print("busiest courses:")
+            for row in report["countries"]:
+                print(f"    {row['course']:<28} {row['races']:>7,} races")
+            return 0
+
+        result = import_raceform_db(settings, args.path,
+                                    since=args.since, until=args.until)
         print(result.summary())
         return 0 if result.races else 1
 

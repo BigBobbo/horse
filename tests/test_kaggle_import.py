@@ -239,3 +239,17 @@ def test_beaten_lengths_measured_from_the_winner(settings, dataset_dir):
     ).fetchone()
     conn.close()
     assert row["beaten_lengths"] == pytest.approx(6.0)  # not 4.0 from positionL
+
+
+def test_foreign_course_codes_are_distinguished_from_british():
+    """A missing bracket means Britain; an unrecognised code means abroad.
+
+    Conflating the two silently imports French and American cards as
+    British racing.
+    """
+    from furlong.sources.kaggle_import import _course_and_country
+
+    assert _course_and_country("Auteuil (FR)") == ("Auteuil", "FR")
+    assert _course_and_country("Del Mar (USA)") == ("Del Mar", "USA")
+    assert _course_and_country("Ascot") == ("Ascot", None)
+    assert _course_and_country("Southwell (AW)") == ("Southwell", None)

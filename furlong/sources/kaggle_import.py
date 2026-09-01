@@ -164,17 +164,24 @@ def _position(raw) -> int | None:
 
 
 def _course_and_country(raw: str | None) -> tuple[str, str | None]:
-    """Split "Curragh (IRE)" into a clean course name and its country."""
+    """Split "Curragh (IRE)" into a clean course name and its country code.
+
+    Returns the bracketed code as found -- "IRE", "FR", "USA" -- so callers
+    can tell a foreign meeting from a domestic one. Two cases both yield
+    None, and they mean the same thing in these datasets: no bracket at all,
+    and the "(AW)" all-weather marker, which describes a surface rather than
+    a country. Conflating "unrecognised country" with "no country" is how a
+    French card gets imported as British.
+    """
     text = (raw or "").strip()
-    country = None
+    code = None
     for match in COURSE_SUFFIX.finditer(text):
-        code = match.group(1).upper()
-        if code in ("IRE",):
-            country = "IRE"
-        elif code in ("GB", "UK"):
-            country = "GB"
+        found = match.group(1).upper()
+        if found == "AW":
+            continue  # a surface, not a country
+        code = "GB" if found == "UK" else found
     cleaned = COURSE_SUFFIX.sub(" ", text).strip()
-    return cleaned, country
+    return cleaned, code
 
 
 def _odds(raw) -> float | None:
@@ -294,7 +301,14 @@ def _import_pair(conn, races_path: Path, horses_path: Path,
                 continue
 
             off = (race_col("time") or "12:00").strip()[:5]
-            country = course_country or _country(race_col("country"), course)
+            if course_country in ("IRE", "GB"):
+                country = course_country
+            elif course_country is not None:
+                # A bracketed code we do not cover: a foreign meeting.
+                result.skipped += len(runners)
+                continue
+            else:
+                country = _country(race_col("country"), course)
             distance = _num(race_col("distance")) or 0.0
             race_type = _norm_race_type(
                 f"{race_col('title') or ''} {race_col('hurdles') or ''}"

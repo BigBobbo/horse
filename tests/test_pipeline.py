@@ -388,3 +388,56 @@ def test_walkover_is_never_advised_as_a_certainty(daily_settings, daily_outcome)
 
     assert all(s.race_id != race_id for s in outcome.suggestions)
     assert all(s.blend_prob <= daily_settings.max_prob for s in outcome.suggestions)
+
+
+def test_daily_advises_nothing_when_the_model_fails_its_own_test(monkeypatch, settings):
+    """The gate has to hold in the live path, not only in the backtest.
+
+    Found on real racing: a fold whose alpha was exactly zero still advised
+    9,020 bets, because beta below one flattens the market's own prices and
+    lifts every longshot past the edge filter.
+    """
+    import pandas as pd
+
+    from furlong.pipeline import daily as daily_module
+
+    calls = []
+
+    def never_called(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("value engine ran despite the model failing the test")
+
+    frame = pd.DataFrame({
+        "runner_id": [1, 2, 3], "race_id": [1, 1, 1],
+        "date": ["2026-05-01"] * 3, "blend_prob": [0.5, 0.3, 0.2],
+    })
+    frame.attrs["adds_information"] = False
+    frame.attrs["blend_lr_p"] = 0.83
+
+    monkeypatch.setattr(daily_module, "score_date", lambda *a, **k: frame)
+    monkeypatch.setattr(daily_module, "find_value", never_called)
+    monkeypatch.setattr(daily_module.repo, "load_latest_odds",
+                        lambda *a, **k: pd.DataFrame())
+
+    conn = init_db(settings.database_path)
+    conn.executescript("""
+        INSERT INTO courses (id, name, country) VALUES (1, 'Curragh', 'IRE');
+        INSERT INTO races (id, source_id, course_id, date, start_time_utc,
+                           race_type, distance_m, going, status)
+        VALUES (1, 'R1', 1, '2026-05-01', '2026-05-01T14:00:00+00:00',
+                'flat', 1600, 'good', 'scheduled');
+        INSERT INTO horses (id, name) VALUES (1, 'A'), (2, 'B'), (3, 'C');
+        INSERT INTO runners (id, race_id, horse_id, status)
+        VALUES (1, 1, 1, 'declared'), (2, 1, 2, 'declared'), (3, 1, 3, 'declared');
+    """)
+    conn.commit()
+    conn.close()
+
+    outcome = daily_module.run_daily(settings, date="2026-05-01", dry_run=True)
+    assert not calls
+    assert outcome.suggestions == []
+    assert outcome.blend_adds_information is False
+    assert outcome.blend_lr_p == 0.83
+    assert "did not beat the market" not in outcome.render_terminal()
+    assert "failed to beat the market" in outcome.render_terminal()
+    assert outcome.to_dict()["blend_lr_p"] == 0.83

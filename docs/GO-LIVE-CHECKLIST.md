@@ -13,9 +13,21 @@ is being commenced in stages during 2026–2028.
 - [ ] **Backtest is clean.** `furlong backtest` runs without a `LeakageError`,
       folds are chronologically separated, and the report's
       `roi_is_significant` is not being read as proof on a small sample.
-- [ ] **The model adds information.** ΔR² over the market is positive on the
-      most recent fold. If the blend weight `alpha` is near zero, the model
-      knows nothing the market does not — do not bet.
+- [ ] **The model adds information.** `furlong train` reports the α = 0
+      likelihood-ratio test as significant, and the backtest's folds show
+      `"priced": true`. The engine enforces this itself — below
+      `FURLONG_BLEND_SIGNIFICANCE` it advises nothing — so the item here is
+      that you have **not raised the threshold to make suggestions appear**.
+      A blend can differ from the market while knowing nothing it does not:
+      with `alpha` at zero and `beta` below one it simply flattens the
+      market's prices and every longshot clears the edge filter. That is what
+      27,381 real Betfair-priced races produced, and it looked like a +2.22%
+      ROI on 10,747 bets. (`REAL-DATA-FINDINGS.md`)
+- [ ] **You have run the free real-data screen** — `furlong import-betfair-hub
+      --download --with-benchmark`, then `train` and `backtest` — and read the
+      result against the published benchmark in the same files. If Betfair's
+      own model also earns zero `alpha` against BSP, the closing line is the
+      bar; if yours does and theirs does not, the problem is your features.
 - [ ] **Paper-trade for at least 200 suggestions**, recording the advised
       price at publication.
 - [ ] **Closing line value is positive** over those 200: mean CLV above 1.0,

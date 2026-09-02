@@ -53,34 +53,43 @@ the validation criteria each piece had to meet.
 
 ```
 [2/6] Training the model and fitting the market blend
-Races 976 · runners 9,475
-  log-loss/race   model 2.0280 · market 1.8401 · blend 1.8377
-  McFadden R2     model 0.0820 · market 0.1671 · blend 0.1682
-  Delta R2 (blend over market): +0.0011  [model adds information]
-  Blend weights   alpha (model) 0.218 · beta (market) 0.870
-  Top features    field_size_norm 0.14, recent_form 0.13, career_place_rate 0.13,
-                  going_slope_today 0.08, dist_fit 0.06
+Races 1,511 · runners 14,794
+  log-loss/race   model 2.0002 · market 1.8837 · blend 1.8703
+  McFadden R2     model 0.0982 · market 0.1507 · blend 0.1568
+  Delta R2 (blend over market): +0.0060  [model adds information]
+  Blend weights   alpha (model) 0.258 · beta (market) 0.859
+  Alpha = 0 test  LR 13.21 on 1 df, p = 0.0003  [model beats the market]
+  Top features    career_place_rate 0.13, field_size_norm 0.12, recent_form 0.08,
+                  going_slope_today 0.07, elo_vs_field 0.06
 
 [3/6] Walk-forward backtest at Betfair SP minus commission
-Backtest over 3 fold(s): 3,865 bets, 646 winners (16.7%)
-  ROI +10.31% (flat-stake +9.91%) vs naive back-everything +2.89%
+  fold 1: train 1,198 races · alpha 0.165 · LR  0.68 p=0.409  priced no   (model did not beat the market)
+  fold 2: train 2,902 races · alpha 0.059 · LR  0.35 p=0.552  priced no   (model did not beat the market)
+  fold 3: train 4,631 races · alpha 0.318 · LR 15.78 p=0.000  priced yes  3,952 bets
+Backtest over 3 fold(s): 3,952 bets, 672 winners (17.0%)
+  ROI +21.86% (flat-stake +21.85%) vs naive back-everything +2.72%
 
 [4/6] Publishing suggestions for the open card
   Race                Runner        Model    Mkt   Price   Floor    Edge  Stake  Venue
-  Newmarket 13:35     Horse 0442    28.7%  22.4%    4.63    3.66  +32.8%   2.00  GreenBook
-  Curragh 18:30       Horse 0108    11.4%   8.6%   11.49    9.40  +28.3%   0.69  exchange
-  Newmarket 14:10     Horse 0170     6.6%   4.2%   18.68   15.88  +23.5%   0.33  HarpBet
+  Curragh 17:55       Horse 0315    30.9%  19.4%    5.63    3.40  +74.0%   1.33  ShamrockOdds
+  Cheltenham 13:35    Horse 0392     8.8%   5.3%   18.68   12.17  +61.0%   0.87  exchange
+  Cheltenham 18:30    Horse 0216    36.7%  32.3%    3.07    2.90  +11.2%   1.38  exchange
   ...
-  12 suggestion(s) (1 unit = 1% of bankroll).
+  9 suggestion(s), 7.05 units staked (1 unit = 1% of bankroll).
 
 [5/6] Running the races and settling
-  Settled 12 suggestion(s): 2 won, 10 lost · P/L +6.88u · mean CLV 1.024
+  Settled 9 suggestion(s): 2 won, 7 lost · P/L +4.30u · mean CLV 1.034
 ```
 
-Twelve bets settling at +6.88 units means nothing on its own — that is what
-"mean CLV 1.024" is there for. The bets beat the closing price by about 2%
+Nine bets settling at +4.30 units means nothing on its own — that is what
+"mean CLV 1.034" is there for. The bets beat the closing price by about 3%
 on average, which is the part that would still be true if the results had
 gone the other way.
+
+The two folds that priced nothing matter as much as the one that did. Neither
+had enough history for the model to be shown to beat the market, so neither
+was allowed to advise anything. **On real racing, all three folds come out
+that way** — see [`docs/REAL-DATA-FINDINGS.md`](docs/REAL-DATA-FINDINGS.md).
 
 ## How it works
 
@@ -94,9 +103,16 @@ form, distance and course fit, days since last run.
 
 **Two-stage model.** A LightGBM model (or a conditional-logit baseline)
 produces per-race probabilities via softmax. Those are then blended with the
-market's de-vigged probabilities by maximum likelihood, Benter-style. If the
-model knows nothing the market does not, the blend weight on it collapses to
-zero and the suggestions stop — which is asserted as a test.
+market's de-vigged probabilities by maximum likelihood, Benter-style.
+
+If the model knows nothing the market does not, **the engine advises nothing
+at all.** Before pricing anything it runs a likelihood-ratio test of `alpha =
+0` on races held out from the blend fit, against a null that keeps `beta`
+free — so a blend that merely flattens or sharpens the market's own prices is
+credited to the market, not to the model. This is not decoration: on real
+Betfair-priced racing the unguarded engine advised 10,747 bets from a fold
+whose alpha was exactly zero, purely because `beta = 0.906` lifted every
+longshot past the edge filter.
 
 **Value engine.** De-vigging by Shin's method (or proportional/power),
 commission-aware expected value, and three filters: minimum edge, minimum
@@ -117,6 +133,7 @@ significant on a small sample.
 | `furlong init-db` | Create the SQLite schema |
 | `furlong generate` | Build a synthetic racing world |
 | `furlong import-csv <file>` | Import historic results from a mapped CSV |
+| `furlong import-betfair-hub` | Import Betfair's free UK+IRE files — BSP for every runner |
 | `furlong import-kaggle <dir>` | Import the Kaggle UK+IRE dataset (`--inspect` first) |
 | `furlong ingest-bsp <files>` | Ingest Betfair SP archives (free, GB+IRE from 2008) |
 | `furlong train` | Fit the model and the market blend |
@@ -139,21 +156,30 @@ export FURLONG_RACING_API_PASSWORD=...
 furlong daily
 ```
 
-Screen the method first, for free: the Kaggle UK+IRE dataset (1990–2020,
-CC BY-NC, so personal use is licensed) is thirty years of form in one
-download.
+Screen the method first, for free and with no account anywhere. Betfair's
+data-science team publishes its
+[UK and Irish thoroughbred files](https://betfair-datascientists.github.io/data/dataListing/):
+27,000+ races from 2024 to last month, with **Betfair SP for every runner** —
+the margin-free closing price this system settles at.
 
 ```bash
-furlong import-kaggle ~/kaggle-racing --inspect
-furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017 2018 2019 2020
-furlong backtest
+furlong import-betfair-hub --download --inspect
+furlong import-betfair-hub --with-benchmark
+furlong train && furlong backtest
 ```
 
-It is a screen, not a verdict. The data stops in 2020, the market has
-sharpened since, and its prices are industry SP (margin-laden) rather than
-Betfair SP — so a positive result is flattered. The value is in the other
-direction: **no edge here is close to definitive**, and costs nothing to
-establish. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the detail.
+**This has been run, and [`docs/REAL-DATA-FINDINGS.md`](docs/REAL-DATA-FINDINGS.md)
+is what it said.** In short: over 27,381 real races the model earned a blend
+weight of exactly zero and the engine advised nothing. So did Betfair's own
+published model on the same races — its alpha against BSP is also zero. The
+closing line is simply that hard, and the files carry no going, trainers,
+jockeys, ratings or finishing positions, so **14 of the 29 features are
+constant** on it.
+
+The Kaggle UK+IRE dataset (1990–2020, CC BY-NC) is still worth importing
+alongside it: it is the only free source here with real form data. Its prices
+are industry SP, so it flatters results and cannot measure CLV, and it needs a
+Kaggle login. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 For running daily against live racing, the stack is The Racing API (from
 about £25/month for UK+IRE racecards, results and 20+ bookmakers' odds) plus
@@ -171,7 +197,7 @@ your bankroll for a 30-bet losing run, because you will have one.
 
 ```bash
 pip install -e ".[dev]"
-pytest                    # 140+ tests, about a minute
+pytest                    # 200+ tests, a few minutes
 ```
 
 The test suite is the argument that this works. It includes a leakage test,
@@ -179,11 +205,17 @@ a "useless model earns zero blend weight" test, a naive-baseline comparison,
 and a check that no page can be served without responsible-gambling
 information.
 
+The sharpest tests are the ones written after the real data broke something:
+that a monotone rescaling of the market cannot pass as information, that an
+informative model on 25 races still fails closed, that the daily run never
+reaches the value engine when the model failed its own test, and that the
+blend fitter never ships weights it did not actually score.
+
 ## Layout
 
 ```
 furlong/
-  sources/     synthetic world, Betfair BSP, The Racing API, CSV import
+  sources/     synthetic world, Betfair BSP + hub files, The Racing API, CSV
   features/    point-in-time feature builder and datasets
   modeling/    conditional logit, LightGBM, the Benter blend, evaluation
   value/       de-vigging, EV engine, Kelly staking, settlement
@@ -191,7 +223,8 @@ furlong/
   pipeline/    daily run, non-runner rescore, demo
   web/         FastAPI app and templates
 docs/
-  PRD.md, OPERATIONS.md, GO-LIVE-CHECKLIST.md, research/
+  PRD.md, OPERATIONS.md, GO-LIVE-CHECKLIST.md,
+  REAL-DATA-FINDINGS.md, research/
 ```
 
 ## Licence and disclaimer

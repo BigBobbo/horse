@@ -83,6 +83,11 @@ class ModelMetrics:
     blend_params: dict
     feature_importance: dict = field(default_factory=dict)
     reliability: list = field(default_factory=list)
+    # Likelihood-ratio test of alpha = 0 on the blend window. Set by
+    # train_on_frames; a p-value at or above the configured significance
+    # means the engine advises nothing.
+    blend_lr_statistic: float | None = None
+    blend_lr_p: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -103,6 +108,8 @@ class ModelMetrics:
             "top_pick_strike_rate": self.top_pick_strike_rate,
             "market_top_pick_strike_rate": self.market_top_pick_strike_rate,
             "blend_params": self.blend_params,
+            "blend_lr_statistic": self.blend_lr_statistic,
+            "blend_lr_p": self.blend_lr_p,
             "feature_importance": self.feature_importance,
             "reliability": self.reliability,
         }
@@ -118,6 +125,15 @@ class ModelMetrics:
             f"  {'[model adds information]' if self.delta_r2 > 0.001 else '[no edge over market]'}",
             f"  Blend weights   alpha (model) {self.blend_params.get('alpha', 0):.3f} · "
             f"beta (market) {self.blend_params.get('beta', 0):.3f}",
+        ]
+        if self.blend_lr_p is not None:
+            verdict = ("model beats the market"
+                       if self.blend_lr_p < 0.05 else
+                       "NOT significant - the engine will advise nothing")
+            lines.append(
+                f"  Alpha = 0 test  LR {self.blend_lr_statistic:.2f} on 1 df, "
+                f"p = {self.blend_lr_p:.4f}  [{verdict}]")
+        lines += [
             f"  Top pick SR     blend {self.top_pick_strike_rate:.3f} · "
             f"market {self.market_top_pick_strike_rate:.3f}",
         ]

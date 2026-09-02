@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_odds_runner ON odds_snapshots(runner_id);
 
+-- A published rating from someone else's model, kept deliberately out of
+-- odds_snapshots. It is not a market quote and must never be mistaken for
+-- one: the CHECK on odds_snapshots.venue is what stops that happening, and
+-- a separate table is what stops anyone being tempted to relax it. Used only
+-- to compare Furlong's edge against a published benchmark on the same races.
+CREATE TABLE IF NOT EXISTS benchmark_ratings (
+    runner_id INTEGER NOT NULL REFERENCES runners(id),
+    source TEXT NOT NULL,
+    rated_price REAL NOT NULL CHECK (rated_price > 1.0),
+    PRIMARY KEY (runner_id, source)
+);
+
 CREATE TABLE IF NOT EXISTS bsp_prices (
     runner_id INTEGER NOT NULL REFERENCES runners(id),
     market TEXT NOT NULL CHECK (market IN ('win', 'place')),

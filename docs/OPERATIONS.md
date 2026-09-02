@@ -103,63 +103,90 @@ furlong ingest-bsp --download-date 2026-08-28        # if reachable from your ne
 furlong ingest-bsp ~/Downloads/dwbfpricesirewin28082026.csv   # or ingest manually
 ```
 
-Betfair geo-blocks some regions; if the download returns a non-200 the
-command says so and continues. Download the files in a browser and pass the
-paths directly.
+Betfair geo-blocks `promo.betfair.com` in some regions — including, at the
+time of writing, the network this was developed on, which returns 403 for
+every file. If the download returns a non-200 the command says so and
+continues; fetch the files in a browser and pass the paths directly. Option C
+below is reachable from everywhere and covers the same prices for 2024
+onwards.
 
-### Option C — the Kaggle UK+IRE dataset (free, and licensed for personal use)
+### Option C — Betfair's own UK+IRE files (free, no login, and the best screen)
 
-The fastest honest route to a real backtest, and the one to start with.
-[kaggle.com/datasets/hwaitt/horse-racing](https://www.kaggle.com/datasets/hwaitt/horse-racing)
-is 759 MB of UK and Irish racing from 1990 to 2020 — results, Racing Post
-Ratings, Topspeed, official ratings and Oddschecker odds — released under
-**CC BY-NC 4.0**. Non-commercial use is *granted*, which makes it the clean
-choice for a personal model: unlike scraping, you are not relying on nobody
-enforcing a terms-of-use clause. The same licence is why it can never
-underpin anything you sell. (`docs/research/open-source-and-community.md`)
+**Start here.** Betfair's data-science team publishes its UK and Irish
+thoroughbred model results at
+[betfair-datascientists.github.io/data/dataListing](https://betfair-datascientists.github.io/data/dataListing/)
+— one file per year to 2025, one per month since, covering 2024 to last
+month. Each row is a runner with **Betfair Starting Price and the result**.
 
-**Read it as a screen, not a verdict.** Two limitations bite:
+```bash
+furlong import-betfair-hub --download --inspect   # fetch, then check the shape
+furlong import-betfair-hub --with-benchmark       # import, keeping their ratings
+furlong train && furlong backtest
+```
 
-- **It ends in 2020, and the market has sharpened since.** The 2020 move to
-  an "industrial" starting price cut overround-per-horse from 1.79% to
-  1.52%, and exchange and syndicate money has grown. An edge visible in 2014
-  may have been arbitraged away by now.
-- **Its prices are industry SP, not Betfair SP.** SP carries a bookmaker
-  margin of roughly 116% per book; BSP is margin-free. Beating SP is an
-  easier bar than the one this system is built to measure, so results here
-  are **biased optimistic**. There are no exchange prices at all, so closing
-  line value cannot be measured.
+That is 27,000+ races and 250,000+ priced runners, and it needs no account
+anywhere. It is the right screen for three reasons:
 
-What makes it worth running anyway is the asymmetry of the outcomes:
+- **BSP is the correct benchmark.** Betfair SP is the margin-free closing
+  price — the thing this system settles at and measures CLV against. The
+  imported book's overround is 1.0019.
+- **It is current**, not a 2020 snapshot of a market that has since sharpened.
+- **It carries a published benchmark.** `--with-benchmark` stores Betfair's
+  own model's rated price in `benchmark_ratings` (deliberately outside
+  `odds_snapshots`, so it can never be mistaken for a market quote and is
+  never a feature). When your model finds no edge, that tells you whether the
+  bar is high or your pipeline is broken.
+
+**What it does not carry is form.** No going, no trainer, no jockey, no draw,
+no official rating, no weight, and no finishing position beyond
+win/placed/unplaced. **14 of the 29 features are constant on it** — every
+trainer and jockey statistic, every going feature, the draw and the official
+rating. Going imports as `unknown` rather than being defaulted to `good`, and
+finishing positions are banded rather than invented.
+
+So read it as a screen, and the asymmetry is what makes it worth running:
 
 | Result | What it means |
 |---|---|
-| No edge | Close to definitive. If the method cannot beat a margin-laden book in 2018, it will not beat a margin-free exchange in 2026. Stop here, cost: nothing. |
-| Edge found | Only "worth paying for current data". Not evidence of an edge today. |
+| No edge | Expected, and informative. Check the benchmark: if Betfair's own model also earns zero alpha, the closing line is the bar, not your code. |
+| Edge found | Worth paying for form data and morning prices. Not yet evidence of a live edge. |
 
-Prefer the recent years to the whole archive — the 1990s tell you little
-about a market that no longer exists:
+[`docs/REAL-DATA-FINDINGS.md`](REAL-DATA-FINDINGS.md) records what happened
+when this was actually run. Short version: neither Furlong nor Betfair's own
+model beat BSP, the engine correctly advised nothing, and doing it caught two
+real bugs.
 
-```bash
-furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017 2018 2019 2020
-```
+### Option C2 — the Kaggle UK+IRE dataset (free, licensed, and now second choice)
+
+[kaggle.com/datasets/hwaitt/horse-racing](https://www.kaggle.com/datasets/hwaitt/horse-racing)
+is 759 MB of UK and Irish racing from 1990 to 2020 under **CC BY-NC 4.0** —
+results, Racing Post Ratings, Topspeed, official ratings and Oddschecker odds.
+Its advantage over Option C is the one that matters most for modelling: **it
+has form data**. Its disadvantages are why it is no longer the first stop:
+
+- **It ends in 2020, and the market has sharpened since.** The 2020 move to an
+  "industrial" starting price cut overround-per-horse from 1.79% to 1.52%.
+- **Its prices are industry SP, not Betfair SP.** SP carries a bookmaker
+  margin of roughly 116% per book; BSP is margin-free. Beating SP is an easier
+  bar than the one this system is built to measure, so results are **biased
+  optimistic**, and closing line value cannot be measured at all.
+- **It needs a Kaggle login to download.**
 
 ```bash
 # a Kaggle login is required to download; extract the archive first
 furlong import-kaggle ~/kaggle-racing --inspect   # check the column mapping
-furlong import-kaggle ~/kaggle-racing             # import every year
-furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017
+furlong import-kaggle ~/kaggle-racing --years 2015 2016 2017 2018 2019 2020
 ```
 
 The dataset ships one pair of files per year (`races_YYYY.csv` and
 `horses_YYYY.csv`, joined on the race id) and its column names have changed
 between vintages, so every field is resolved through a list of candidate
-names. **Always run `--inspect` first**: it prints what was detected and
-names any required field it could not find.
+names. **Always run `--inspect` first**: it prints what was detected and names
+any required field it could not find. Prices import as starting prices under
+the bookmaker name `SP`.
 
-Prices import as starting prices under the bookmaker name `SP`. That is a
-closing line, so a backtest on this data measures the model against the
-market's final word — the right benchmark, and a demanding one.
+Importing both is the strongest free position available: form from Kaggle,
+the honest closing price from Betfair.
 
 ### Option D — your own historic results
 
@@ -210,6 +237,22 @@ only on races strictly before the target date. Import history first.
 **No suggestions produced** — this is normal and often correct. On most
 days the market is not wrong enough to be worth the risk. Check
 `FURLONG_MIN_EDGE` (default 0.05) if you never see any.
+
+**"Nothing priced ... the model failed to beat the market"** — not a bug, and
+not the same thing as "no value today". Before pricing anything the engine
+runs a likelihood-ratio test of `alpha = 0` on races held out from the blend
+fit, against a null that keeps `beta` free. If the model cannot be shown to
+know something the market does not (default threshold p < 0.05,
+`FURLONG_BLEND_SIGNIFICANCE`), it advises nothing at all.
+
+This exists because the alternative is worse. Without it, a blend with
+`alpha = 0` and `beta = 0.906` — which is what 27,381 real Betfair-priced
+races produced — flattens the market's own prices, lifts every longshot past
+the edge filter, and advises five figures' worth of bets containing no model
+information whatsoever. Raising the threshold to force suggestions is
+choosing to bet on arithmetic. `furlong train` prints the test result; if the
+p-value is near 1.0, the model needs better features or more history, not a
+looser gate. See [`docs/REAL-DATA-FINDINGS.md`](REAL-DATA-FINDINGS.md).
 
 **Suggestions look too good** — an ROI above about 15% over a few hundred
 bets is almost always leakage or variance, not edge. Re-read the backtest

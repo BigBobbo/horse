@@ -17,8 +17,12 @@ htmlcov/
 *.sqlite
 *.sqlite3
 *.db
-data/raw/
-data/cache/
+# Everything under data/ is generated or downloaded: databases, the Betfair
+# hub CSVs (re-fetch with `furlong import-betfair-hub --download`), reports,
+# published suggestions and model artifacts. None of it belongs in the repo,
+# and the hub files are Betfair's to distribute, not ours.
+data/
+!data/.gitkeep
 models/artifacts/
 *.parquet
 

@@ -46,6 +46,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="report detected files and columns without importing")
     p.add_argument("--years", nargs="*", help="only these years (e.g. 2015 2016)")
 
+    p = sub.add_parser("import-betfair-hub",
+                       help="Import Betfair's free UK+IRE model files (BSP for every runner)")
+    p.add_argument("target", nargs="?", default=None,
+                   help="CSV file or directory (default: <data-dir>/betfair-hub)")
+    p.add_argument("--inspect", action="store_true",
+                   help="report the files' shape without importing")
+    p.add_argument("--download", action="store_true",
+                   help="fetch the published files first (no login required)")
+    p.add_argument("--since", help="only races on or after this ISO date")
+    p.add_argument("--until", help="only races on or before this ISO date")
+    p.add_argument("--with-benchmark", action="store_true",
+                   help="also store Betfair's own RATED_PRICE for comparison")
+
     p = sub.add_parser("import-raceform",
                        help="Import an rpscrape-schema SQLite database (raceform.db)")
     p.add_argument("path", help="path to raceform.db")
@@ -169,6 +182,44 @@ def main(argv: list[str] | None = None) -> int:
 
         result = import_kaggle_dataset(settings, args.directory,
                                        years=tuple(args.years) if args.years else None)
+        print(result.summary())
+        return 0 if result.races else 1
+
+    if args.command == "import-betfair-hub":
+        from furlong.sources.betfair_hub import (
+            import_betfair_hub, inspect, download_files, DEFAULT_DIR_NAME,
+        )
+
+        target = args.target or str(settings.data_dir / DEFAULT_DIR_NAME)
+        if args.download:
+            paths, failures = download_files(target)
+            print(f"Downloaded {len(paths)} file(s) to {target}")
+            for name, reason in failures:
+                print(f"  could not fetch {name}: {reason}", file=sys.stderr)
+            if not paths:
+                return 1
+
+        if args.inspect:
+            report = inspect(target)
+            if not report["rows"]:
+                print(f"No usable CSV files found at {target}", file=sys.stderr)
+                for message in report["errors"]:
+                    print(f"  {message}", file=sys.stderr)
+                return 1
+            print(f"{report['rows']:,} runner rows across {report['races']:,} races "
+                  f"in {report['files']} file(s), {report['first']} to {report['last']}")
+            print("  by country: " + ", ".join(
+                f"{name} {count:,}" for name, count in report["countries"]))
+            print("  busiest tracks:")
+            for name, count in report["tracks"]:
+                print(f"    {name:<24}{count:>8,} runners")
+            for message in report["errors"]:
+                print(f"  WARNING {message}")
+            return 0
+
+        result = import_betfair_hub(settings, target, since=args.since,
+                                    until=args.until,
+                                    with_benchmark=args.with_benchmark)
         print(result.summary())
         return 0 if result.races else 1
 

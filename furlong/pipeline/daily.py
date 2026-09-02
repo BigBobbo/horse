@@ -66,6 +66,11 @@ class DailyOutcome:
     dry_run: bool = False
     message: str | None = None
     written: dict = field(default_factory=dict)
+    # p-value of the likelihood-ratio test that the model adds nothing to
+    # the market, and whether it cleared the threshold. False means nothing
+    # was priced today.
+    blend_lr_p: float | None = None
+    blend_adds_information: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +79,8 @@ class DailyOutcome:
             "races_considered": self.races_considered,
             "runners_considered": self.runners_considered,
             "n_suggestions": len(self.suggestions),
+            "blend_lr_p": self.blend_lr_p,
+            "blend_adds_information": self.blend_adds_information,
             "suggestions": [
                 {**s.to_dict(), "stake_units": round(float(p.stake_units), 3),
                  "stake_capped_by": p.capped_by}
@@ -88,6 +95,17 @@ class DailyOutcome:
             f"Furlong suggestions for {self.date} "
             f"({self.races_considered} races, {self.runners_considered} runners considered)"
         )
+        if not self.suggestions and not self.blend_adds_information:
+            p_value = ("" if self.blend_lr_p is None
+                       else f" (p = {self.blend_lr_p:.3f})")
+            return (
+                f"{header}\n"
+                f"  Nothing priced. On races held out from its own fit the model "
+                f"failed to beat the market{p_value}, so it has not "
+                "been shown to know anything the market does not.\n"
+                "  Any 'value' it found would be a reshaping of the market's own prices, "
+                "not information. Retrain on more or better data before betting."
+            )
         if not self.suggestions:
             return (
                 f"{header}\n"
@@ -182,6 +200,11 @@ def score_date(settings: Settings, conn: sqlite3.Connection, date: str,
     )
     today["model_prob"] = model_probs
     today["blend_prob"] = blend_probs
+    # Carried out of here rather than recomputed: the caller must not advise
+    # anything when the blend failed to beat the market out of sample.
+    today.attrs["blend_lr_p"] = trained.blend_lr_p
+    today.attrs["adds_information"] = trained.adds_information(
+        settings.blend_significance)
     return today
 
 
@@ -257,7 +280,13 @@ def run_daily(settings: Settings, date: str | None = None, dry_run: bool = False
 
     race_ids = sorted(set(int(r) for r in scored["race_id"]))
     odds = repo.load_latest_odds(conn, race_ids)
-    suggestions = find_value(scored, odds, settings)
+    if scored.attrs.get("adds_information", True):
+        suggestions = find_value(scored, odds, settings)
+    else:
+        # The blend did not beat the market on races held out from its own
+        # fit. Whatever "value" it would find is a reshaping of the market's
+        # own prices, so the honest output is an empty card.
+        suggestions = []
     _decorate(conn, suggestions)
 
     plans = [
@@ -277,6 +306,8 @@ def run_daily(settings: Settings, date: str | None = None, dry_run: bool = False
         races_considered=len(race_ids),
         runners_considered=len(scored),
         dry_run=dry_run,
+        blend_lr_p=scored.attrs.get("blend_lr_p"),
+        blend_adds_information=bool(scored.attrs.get("adds_information", True)),
     )
 
     if not dry_run:

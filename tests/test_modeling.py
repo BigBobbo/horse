@@ -226,3 +226,134 @@ def test_blend_is_not_fitted_on_the_early_stopping_set():
     assert len(a) == len(b) == 1
     empty = pd.DataFrame({"date": [], "race_id": []})
     assert _split_validation(empty)[0].empty
+
+
+# -- the alpha = 0 gate -----------------------------------------------------
+#
+# The regression these guard against was found on real racing data, not in a
+# unit test: over 27,381 Betfair-priced UK and Irish races the blend fitted
+# alpha to exactly zero and beta to 0.906, and the engine advised 10,747
+# bets. None of them carried any model information. They existed because
+# beta below one flattens the market's own prices, lifting every longshot's
+# implied probability past the edge filter.
+
+
+def _race_world(n_races=600, field=8, market_noise=0.35, model_noise=0.35,
+                seed=0):
+    """Races with a true strength, a noisy market, and a noisy model.
+
+    Both observers see the truth imperfectly and differently, so the model
+    holds information the market does not -- the situation the blend exists
+    to exploit. Nothing here is separable: the MLE is interior, as it is on
+    real racing.
+    """
+    rng = np.random.default_rng(seed)
+    groups = np.full(n_races, field)
+    truth = rng.gamma(2.0, 1.0, size=n_races * field)
+
+    def observed(noise):
+        seen = truth * np.exp(rng.normal(0.0, noise, size=truth.shape))
+        return np.concatenate([s / s.sum() for s in np.split(seen, n_races)])
+
+    true_probs = np.concatenate([s / s.sum() for s in np.split(truth, n_races)])
+    market = observed(market_noise)
+    model = observed(model_noise)
+
+    y = np.zeros(n_races * field)
+    for i in range(n_races):
+        y[i * field + rng.choice(field, p=true_probs[i * field:(i + 1) * field])] = 1.0
+    assert y.sum() == n_races, "one winner per race"
+    return model, market, y, groups
+
+
+def test_a_useless_model_fails_the_alpha_test():
+    from furlong.modeling.blend import model_adds_information
+
+    _, market, y, groups = _race_world(seed=3)
+    rng = np.random.default_rng(11)
+    noise = rng.random(len(market))
+    useless = np.concatenate([s / s.sum() for s in np.split(noise, len(groups))])
+
+    statistic, p_value = model_adds_information(useless, market, y, groups)
+    assert p_value > 0.05, (
+        f"pure noise was judged informative (LR {statistic:.2f}, p={p_value:.4f})"
+    )
+
+
+def test_reshaping_the_market_is_not_information():
+    """A blend that only flattens the market must not pass the test.
+
+    This is the exact failure found on real data. The "model" here is the
+    market raised to a power: a monotone rescaling carrying not one bit the
+    market did not already have. Because the null keeps beta free, the
+    rescaling is absorbed there and alpha earns nothing -- which is the whole
+    reason the null is not simply beta = 1.
+    """
+    from furlong.modeling.blend import model_adds_information
+
+    _, market, y, groups = _race_world(seed=7)
+    reshaped = np.concatenate([
+        (s ** 0.85) / (s ** 0.85).sum() for s in np.split(market, len(groups))
+    ])
+    _, p_value = model_adds_information(reshaped, market, y, groups)
+    assert p_value > 0.05, "a rescaling of the market was mistaken for information"
+
+
+def test_a_genuinely_informative_model_passes():
+    """A model that sees the truth as clearly as the market must be heard."""
+    from furlong.modeling.blend import model_adds_information
+
+    model, market, y, groups = _race_world(n_races=1500, seed=5)
+    statistic, p_value = model_adds_information(model, market, y, groups)
+    assert p_value < 0.01, f"real information was missed (LR {statistic:.2f})"
+
+
+def test_thin_evidence_fails_closed():
+    """The same informative model, on too few races, must not be trusted.
+
+    Failing to reject on thin evidence is the point: for a betting system,
+    "not shown" has to mean "do not bet".
+    """
+    from furlong.modeling.blend import model_adds_information
+
+    model, market, y, groups = _race_world(n_races=25, seed=5)
+    _, p_value = model_adds_information(model, market, y, groups)
+    assert p_value > 0.05
+
+
+def test_market_only_fit_leaves_alpha_at_zero():
+    from furlong.modeling.blend import fit_market_only
+
+    _, market, y, groups = _race_world(seed=1)
+    params = fit_market_only(market, y, groups)
+    assert params.alpha == 0.0
+    assert params.beta > 0.0
+
+
+def test_fit_never_ships_a_blend_worse_than_the_market():
+    """Weights are clamped inside the search, not after it.
+
+    Clamping afterwards moves the answer to a point the optimiser never
+    scored. On a separable problem the unconstrained fit runs to
+    (alpha 96, beta -96.9) -- a perfect in-sample fit -- and clamping that to
+    (96, 0) shipped a blend whose log-loss was four times worse than
+    ignoring the model altogether.
+    """
+    from furlong.modeling.blend import (
+        BlendParams, blend_log_likelihood, fit_blend)
+
+    _, market, y, groups = _race_world(n_races=800, seed=5)
+    # Separable by construction: the winner's probability is lifted, so the
+    # unconstrained likelihood is unbounded along beta = -alpha.
+    leaked = market * np.where(y == 1, 1.6, 1.0)
+    leaked = np.concatenate([s / s.sum() for s in np.split(leaked, len(groups))])
+
+    params = fit_blend(leaked, market, y, groups)
+    assert params.alpha >= 0.0 and params.beta >= 0.0
+    fitted = blend_log_likelihood(leaked, market, y, groups, params)
+    market_only = blend_log_likelihood(market, market, y, groups,
+                                       BlendParams(alpha=0.0, beta=1.0))
+    assert fitted >= market_only, (
+        f"shipped a blend fitting worse than the market alone "
+        f"({fitted:.1f} vs {market_only:.1f})"
+    )

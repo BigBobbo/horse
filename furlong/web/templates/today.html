@@ -19,11 +19,26 @@ available odds. Ranked by expected value.</p>
 {% endif %}
 
 {% if not suggestions %}
+  {% if run and run.blend_adds_information is defined and not run.blend_adds_information %}
+  <div class="empty">
+    <p><strong>Nothing priced &mdash; the model did not beat the market.</strong></p>
+    <p>On races held out from its own fit, the model failed to show it knows
+    anything the market does not{% if run.blend_lr_p is not none %}
+    (p = {{ "%.3f"|format(run.blend_lr_p) }}){% endif %}. This is not the same
+    as &ldquo;no value today&rdquo;: the engine has no basis for an opinion at
+    all, so it offers none.</p>
+    <p>Any &ldquo;value&rdquo; it could report here would be a reshaping of the
+    market&rsquo;s own prices rather than information &mdash; which is exactly
+    how a model with nothing to say ends up advising thousands of longshots.
+    The fix is better features or more history, not a looser threshold.</p>
+  </div>
+  {% else %}
   <div class="empty">
     <p><strong>No qualifying value bets.</strong></p>
     <p>Not betting is a position. On most days the market is not wrong enough
     to be worth the risk.</p>
   </div>
+  {% endif %}
 {% else %}
   <div class="note">
     <strong>Do not take a price below the floor.</strong> The value is in the price,

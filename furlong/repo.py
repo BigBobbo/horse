@@ -170,6 +170,18 @@ def upsert_bsp(conn: sqlite3.Connection, runner_id: int, market: str, bsp: float
     )
 
 
+def upsert_benchmark_rating(conn: sqlite3.Connection, runner_id: int,
+                            source: str, rated_price: float) -> None:
+    """Store a third-party model's rated price for comparison only."""
+    conn.execute(
+        """INSERT INTO benchmark_ratings (runner_id, source, rated_price)
+           VALUES (?, ?, ?)
+           ON CONFLICT(runner_id, source) DO UPDATE SET
+             rated_price=excluded.rated_price""",
+        (runner_id, source, rated_price),
+    )
+
+
 def set_synthetic_truth(conn: sqlite3.Connection, runner_id: int, true_prob: float) -> None:
     conn.execute(
         """INSERT INTO synthetic_truth (runner_id, true_prob) VALUES (?, ?)

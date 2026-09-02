@@ -13,6 +13,7 @@ it outside the Gambling Regulation Act 2024's licensing categories.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -63,6 +64,33 @@ def load_suggestions(conn: sqlite3.Connection, date: str | None = None) -> list[
         (date,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def load_run_status(settings: Settings, date: str | None) -> dict:
+    """Why the last run for ``date`` advised what it did.
+
+    An empty card has two very different causes, and conflating them would
+    tell the reader the model is working and merely being selective when in
+    fact it has been shown to know nothing. The daily run records which it
+    was; this reads it back.
+
+    The date is validated here rather than at the route, because it reaches a
+    filesystem path: ``/`` takes it straight from the query string, and
+    ``suggestions-../../etc/passwd.json`` would otherwise escape the data
+    directory. Checking at the point of use survives a new caller forgetting.
+    """
+    if not date or not _valid_date(date):
+        return {}
+    path = Path(settings.data_dir) / "suggestions" / f"suggestions-{date}.json"
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {
+        "blend_adds_information": payload.get("blend_adds_information", True),
+        "blend_lr_p": payload.get("blend_lr_p"),
+        "races_considered": payload.get("races_considered"),
+    }
 
 
 def load_race(conn: sqlite3.Connection, race_id: int) -> dict | None:
@@ -127,7 +155,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         shown_date = date or (dates[0] if dates else None)
         total_stake = sum(s["stake_units"] for s in suggestions if s["status"] != "withdrawn")
         return render(request, "today.html", suggestions=suggestions,
-                      date=shown_date, dates=dates, total_stake=total_stake)
+                      date=shown_date, dates=dates, total_stake=total_stake,
+                      run=load_run_status(settings, shown_date))
 
     @app.get("/races/{race_id}", response_class=HTMLResponse)
     def race_view(request: Request, race_id: int):
@@ -161,6 +190,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({
             "date": date or (suggestions[0]["date"] if suggestions else None),
             "count": len(suggestions),
+            **load_run_status(settings, date or (suggestions[0]["date"] if suggestions else None)),
             "suggestions": suggestions,
         })
 

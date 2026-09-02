@@ -137,8 +137,12 @@ Every task lists **Validation criteria (VC)** — objective checks (automated te
   **VC:** probabilities sum to 1 per race (1e-9); on synthetic data, ability-correlated features get positive weights; test log-loss beats uniform-probability baseline.
 - **T4.2 GBDT model.** LightGBM (binary objective, per-race softmax of scores; deterministic seed).
   **VC:** test log-loss ≤ conditional logit + 1%; deterministic across runs; artifact save/load parity of predictions.
-- **T4.3 Benter blend.** Stage-2 MLE of `p ∝ exp(α·log f + β·log q)` on validation (f = fundamental model, q = de-vigged exchange probs); fitted α, β persisted.
-  **VC:** blended test log-loss ≤ min(model-only, market-only) within tolerance; **ΔR² (McFadden vs market-only) > 0 on synthetic data** (the planted inefficiency must be found); with a deliberately useless model, β→dominates and blend ≈ market (sanity test).
+- **T4.3 Benter blend.** Stage-2 MLE of `p ∝ exp(α·log f + β·log q)` on validation (f = fundamental model, q = de-vigged exchange probs); fitted α, β persisted. Weights are constrained non-negative **inside** the optimisation, with the market-only fit as a floor.
+  **VC:** blended test log-loss ≤ min(model-only, market-only) within tolerance; **ΔR² (McFadden vs market-only) > 0 on synthetic data** (the planted inefficiency must be found); with a deliberately useless model, β→dominates and blend ≈ market (sanity test); on a separable problem the shipped blend never fits worse than the market alone (regression: post-hoc clamping shipped α=96, β=0 with four times the market's log-loss).
+
+- **T4.4 The α = 0 gate.** Before anything is priced, a likelihood-ratio test of α = 0 on the blend window, against a **market-only null with β free** so that reshaping the market cannot pass as information. Above `FURLONG_BLEND_SIGNIFICANCE` (default p ≥ 0.05) the engine advises nothing, in the backtest and the daily run alike.
+  **VC:** pure noise and a monotone rescaling of the market both fail the test; a genuinely informative model passes; the same model on 25 races fails (thin evidence must fail closed); the daily run never calls the value engine when the test fails; the web card distinguishes "model knows nothing" from "no value today".
+  **Why:** on 27,381 real Betfair-priced UK and Irish races the unguarded engine advised 10,747 bets from folds whose α was zero — pure market flattening (`docs/REAL-DATA-FINDINGS.md`).
 - **T4.4 Evaluation & calibration report.** Log-loss, Brier, McFadden R², ΔR² vs market, reliability table (predicted vs actual by prob decile); `furlong train` emits metrics JSON + model artifact + model_runs row.
   **VC:** metrics JSON schema stable; reliability deciles monotone on synthetic test set (allowing noise); train command end-to-end test.
 
@@ -154,6 +158,9 @@ Every task lists **Validation criteria (VC)** — objective checks (automated te
   **VC:** table-driven tests for each rule incl. Rule 4 bands and dead heats.
 
 ### Epic 6 — Backtesting
+
+- **T2.5 Real-data connector (Betfair hub files).** Import Betfair's published UK+IRE thoroughbred files — BSP and result for every runner, 2024 to date, no login — with a `--download` fetcher, an `--inspect` mode and an opt-in `--with-benchmark` that stores their own model's rating in a table the market layer cannot reach.
+  **VC:** day-first and ISO dates both parse; race times convert from the publisher's Australian timezone; a market id reused on a rescheduled day imports as two races; duplicate runner rows collapse; races with no result, without exactly one winner, or with fewer than two priced runners are skipped and counted; non-runners are recorded but never priced; the import is idempotent; the benchmark rating cannot be inserted into `odds_snapshots`. Imported data reproduces a 34.5% favourite strike rate and a 1.0019 BSP overround.
 
 - **T6.1 Walk-forward engine.** Season-by-season: train on past, refit blend on recent window, bet the value strategy at BSP−commission on the test season; full per-bet log.
   **VC:** fold-boundary assertion (no future leakage) built into the engine and tested; deterministic under seed; runs over synthetic multi-season world in CI time.

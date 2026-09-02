@@ -24,7 +24,7 @@ import pandas as pd
 from furlong.config import Settings
 from furlong.db import init_db
 from furlong.features.builder import FEATURE_COLUMNS
-from furlong.features.dataset import Dataset, build_dataset
+from furlong.features.dataset import build_dataset
 from furlong.modeling.train import attach_market, train_on_frames
 from furlong.value.devig import expected_value
 from furlong.value.staking import kelly_fraction
@@ -81,18 +81,47 @@ class BacktestResult:
             return 0.0
         return float(self.all_runners["naive_pl"].mean())
 
+    def fold_lines(self) -> list[str]:
+        """Per-fold gate status.
+
+        A fold that priced nothing is as much a result as one that did, and
+        it is invisible in the totals -- so it gets a line of its own.
+        """
+        lines = []
+        for fold in self.folds:
+            verdict = (f"priced yes  {fold['bets']:,} bets" if fold.get("priced", True)
+                       else "priced no   (model did not beat the market)")
+            lines.append(
+                f"  fold {fold['fold']}: train {fold['train_races']:,} races · "
+                f"alpha {fold['blend_alpha']:.3f} · "
+                f"LR {fold['blend_lr_statistic']:.2f} p={fold['blend_lr_p']:.3f}  "
+                f"{verdict}"
+            )
+        return lines
+
     def summary(self) -> str:
+        lines = self.fold_lines()
         if self.bets.empty:
-            return "Backtest produced no qualifying bets."
+            lines.append("Backtest produced no qualifying bets.")
+            if self.folds and not any(f.get("priced", True) for f in self.folds):
+                lines.append(
+                    "  No fold's model was shown to beat the market, so none was "
+                    "allowed to advise anything.")
+            if not self.all_runners.empty:
+                lines.append(
+                    f"  Backing every runner over the same races: "
+                    f"{self.naive_roi():+.2%}")
+            return "\n".join(lines)
         won = int(self.bets["won"].sum())
-        return (
+        lines += [
             f"Backtest over {len(self.folds)} fold(s): {self.n_bets:,} bets, "
-            f"{won:,} winners ({won / self.n_bets:.1%})\n"
+            f"{won:,} winners ({won / self.n_bets:.1%})",
             f"  ROI {self.roi():+.2%} (flat-stake {self.bets['pl_flat'].mean():+.2%}) "
-            f"vs naive back-everything {self.naive_roi():+.2%}\n"
+            f"vs naive back-everything {self.naive_roi():+.2%}",
             f"  Mean CLV {self.bets['clv'].mean():.3f} · "
-            f"avg advised odds {self.bets['odds'].mean():.2f}"
-        )
+            f"avg advised odds {self.bets['odds'].mean():.2f}",
+        ]
+        return "\n".join(lines)
 
 
 def run_backtest(settings: Settings, model_kind: str = "gbm",
@@ -160,7 +189,12 @@ def run_backtest(settings: Settings, model_kind: str = "gbm",
             test["market_prob"].to_numpy(dtype=float),
         )
 
-        fold_bets, fold_naive = _simulate_fold(test, model_probs, blend_probs, settings)
+        # A blend that did not beat the market on races held out from its own
+        # fit prices nothing. Skipping the fold still records the naive
+        # baseline, so the report shows what the fold would have paid.
+        informative = trained.adds_information(settings.blend_significance)
+        fold_bets, fold_naive = _simulate_fold(
+            test, model_probs, blend_probs, settings, place_bets=informative)
         bets.extend(fold_bets)
         naive_rows.extend(fold_naive)
         folds.append({
@@ -171,6 +205,9 @@ def run_backtest(settings: Settings, model_kind: str = "gbm",
             "test_start": str(test["date"].min()),
             "test_end": str(test["date"].max()),
             "delta_r2": float(trained.metrics.delta_r2),
+            "blend_lr_statistic": float(trained.blend_lr_statistic),
+            "blend_lr_p": float(trained.blend_lr_p),
+            "priced": bool(informative),
             "blend_alpha": float(trained.blend.alpha),
             "blend_beta": float(trained.blend.beta),
             "bets": len(fold_bets),
@@ -184,6 +221,7 @@ def run_backtest(settings: Settings, model_kind: str = "gbm",
             "model": model_kind,
             "commission": settings.exchange_commission,
             "min_edge": settings.min_edge,
+            "blend_significance": settings.blend_significance,
             "min_prob": settings.min_prob,
             "max_odds": settings.max_odds,
             "kelly_fraction": settings.kelly_fraction,
@@ -198,8 +236,13 @@ def _group_sizes(frame: pd.DataFrame) -> np.ndarray:
 
 
 def _simulate_fold(test: pd.DataFrame, model_probs: np.ndarray, blend_probs: np.ndarray,
-                   settings: Settings) -> tuple[list[dict], list[dict]]:
-    """Place the value bets for one fold at BSP minus commission."""
+                   settings: Settings,
+                   place_bets: bool = True) -> tuple[list[dict], list[dict]]:
+    """Place the value bets for one fold at BSP minus commission.
+
+    ``place_bets`` False still walks the fold to record the naive
+    back-everything baseline, but advises nothing.
+    """
     commission = settings.exchange_commission
     odds = test["market_odds"].to_numpy(dtype=float)
     won = (test["win_flag"] == 1).to_numpy(dtype=float)
@@ -225,6 +268,8 @@ def _simulate_fold(test: pd.DataFrame, model_probs: np.ndarray, blend_probs: np.
             "odds": price, "won": win, "naive_pl": naive_pl,
         })
 
+        if not place_bets:
+            continue
         prob = float(blend_probs[i])
         if prob < settings.min_prob or price > settings.max_odds:
             continue

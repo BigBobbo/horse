@@ -145,3 +145,61 @@ def test_empty_database_still_serves(tmp_path):
     for path in PAGES:
         assert empty_client.get(path).status_code == 200
     assert empty_client.get("/api/suggestions").json()["count"] == 0
+
+
+def test_an_empty_card_says_which_kind_of_empty_it_is(tmp_path, settings):
+    """Two very different reasons produce no bets; the page must not conflate them.
+
+    "The market was not wrong enough today" says the model is working and
+    being selective. "The model was shown to know nothing" says it has no
+    basis for an opinion at all. Reporting the second as the first would
+    flatter a model that had just failed its own test.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from furlong.db import init_db
+    from furlong.web.app import create_app
+
+    init_db(settings.database_path).close()
+    directory = settings.data_dir / "suggestions"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "suggestions-2026-05-01.json").write_text(json.dumps({
+        "date": "2026-05-01", "n_suggestions": 0, "suggestions": [],
+        "races_considered": 24, "blend_adds_information": False,
+        "blend_lr_p": 0.42,
+    }))
+
+    client = TestClient(create_app(settings))
+    body = client.get("/?date=2026-05-01").text
+    assert "did not beat the market" in body
+    assert "p = 0.420" in body
+    assert "No qualifying value bets" not in body
+
+    payload = client.get("/api/suggestions?date=2026-05-01").json()
+    assert payload["blend_adds_information"] is False
+    assert payload["blend_lr_p"] == 0.42
+
+
+def test_the_date_parameter_cannot_escape_the_data_directory(tmp_path, settings):
+    """`/` takes its date straight from the query string, and it reaches a path.
+
+    The API route validates the date; the HTML one did not, so the check
+    lives at the point of use where a new caller cannot forget it.
+    """
+    from fastapi.testclient import TestClient
+
+    from furlong.db import init_db
+    from furlong.web.app import create_app, load_run_status
+
+    init_db(settings.database_path).close()
+    secret = tmp_path / "suggestions-secret.json"
+    secret.write_text('{"blend_adds_information": false, "blend_lr_p": 0.5}')
+
+    for hostile in ("../../../etc/passwd", f"../../{tmp_path.name}/secret",
+                    "not-a-date", "2026-05-01/../../x"):
+        assert load_run_status(settings, hostile) == {}
+
+    client = TestClient(create_app(settings))
+    assert client.get("/?date=../../../etc/passwd").status_code == 200

@@ -19,15 +19,21 @@ def backtest_settings(tmp_path_factory):
 
     The headline validation -- does the value strategy actually beat doing
     nothing -- is a statistical claim, and the research is emphatic that a
-    few hundred bets prove nothing. 700 days gives ~5,000 races and several
-    thousand bets, enough for the assertion to hold across seeds instead of
-    passing by luck.
+    few hundred bets prove nothing.
+
+    It has to be this big for a second reason. The engine now refuses to
+    price a fold whose model failed a likelihood-ratio test against the
+    market, and that test needs evidence: at ~1,200 training races the first
+    fold never clears it, at ~4,300 the second is borderline, and only by
+    ~7,500 does the third clear decisively (p = 0.002). 1,400 days gives
+    ~13,500 races, so at least one fold prices and the ROI assertions have
+    thousands of bets behind them.
     """
     from furlong.config import Settings
     from furlong.sources.synthetic import generate_world
 
     settings = Settings(data_dir=tmp_path_factory.mktemp("backtest") / "data")
-    generate_world(settings, seed=23, n_horses=450, days=700)
+    generate_world(settings, seed=23, n_horses=700, days=1400)
     return settings
 
 

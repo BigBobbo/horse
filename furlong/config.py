@@ -49,6 +49,12 @@ class Settings:
 
     # Value engine
     exchange_commission: float = 0.02  # Betfair My Rewards Basic plan
+    # Significance the model must reach on the blend window's likelihood-ratio
+    # test of alpha = 0 before the engine may advise anything. Above this
+    # p-value the model has not been shown to know anything the market does
+    # not, and any "value" it finds is a reshaping of the market's own
+    # prices. Lower it to demand stronger evidence.
+    blend_significance: float = 0.05
     min_edge: float = 0.05            # minimum EV per unit staked to suggest
     min_prob: float = 0.05            # Bolton-Chapman longshot exclusion
     max_odds: float = 21.0            # never advise above this decimal price
@@ -83,6 +89,7 @@ class Settings:
 
     _FLOAT_FIELDS = {
         "exchange_commission",
+        "blend_significance",
         "min_edge",
         "min_prob",
         "max_odds",

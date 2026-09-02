@@ -60,10 +60,32 @@ def is_significant(roi: float, standard_error: float, n_bets: int) -> bool:
 
 
 
+def _naive_roi(result: BacktestResult) -> float | None:
+    """ROI of backing every priced runner -- the do-nothing comparison."""
+    runners = result.all_runners
+    if runners.empty or "naive_pl" not in runners:
+        return None
+    return float(runners["naive_pl"].mean())
+
+
 def compute_metrics(result: BacktestResult) -> dict:
     bets = result.bets
     if bets.empty:
-        return {"n_bets": 0, "note": "no qualifying bets"}
+        # A backtest that advised nothing is a result, not an absence of one,
+        # and the fold table is the only place that says why. Dropping it
+        # left the most important run of all -- the one where the model was
+        # judged to know nothing -- with no explanation in the report.
+        blocked = [f for f in result.folds if not f.get("priced", True)]
+        note = "no qualifying bets"
+        if blocked and len(blocked) == len(result.folds):
+            note = ("the model did not beat the market on any fold, so nothing "
+                    "was priced")
+        elif blocked:
+            note = (f"{len(blocked)} of {len(result.folds)} fold(s) priced nothing "
+                    "because the model did not beat the market; the rest found "
+                    "no qualifying value")
+        return {"n_bets": 0, "note": note, "folds": result.folds,
+                "naive_back_all_roi": _naive_roi(result)}
 
     pl = bets["pl"].to_numpy(dtype=float)
     stakes = bets["stake"].to_numpy(dtype=float)
@@ -146,7 +168,14 @@ def write_report(result: BacktestResult, out_dir: str | Path) -> dict[str, str]:
 
 def _render_html(metrics: dict) -> str:
     if metrics.get("n_bets", 0) == 0:
-        body = "<p>No qualifying bets were produced.</p>"
+        naive = metrics.get("naive_back_all_roi")
+        naive_line = ("" if naive is None else
+                      f"<p>Backing every runner over the same races returned "
+                      f"<strong>{naive:+.2%}</strong>.</p>")
+        body = (f"<p>No qualifying bets were produced: "
+                f"{metrics.get('note', 'no qualifying bets')}.</p>{naive_line}"
+                + (f"<h2>Folds</h2>{_table(metrics['folds'])}"
+                   if metrics.get("folds") else ""))
     else:
         significance = (
             "statistically significant at 2 SE"

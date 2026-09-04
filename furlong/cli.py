@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", choices=["gbm", "logit"], default="gbm")
     p.add_argument("--out", help="directory for the report (default data/reports)")
 
+    p = sub.add_parser("calibration",
+                       help="Is the market already priced against our features?")
+    p.add_argument("--bins", type=int, default=8, help="quantile bins (default 8)")
+    p.add_argument("--features", nargs="*", help="only these features")
+    p.add_argument("--out", help="write the full JSON report here")
+
     p = sub.add_parser("daily", help="Produce today's suggestions")
     p.add_argument("--date", help="ISO date (default: today's racing)")
     p.add_argument("--dry-run", action="store_true", help="compute but write nothing")
@@ -260,6 +266,25 @@ def main(argv: list[str] | None = None) -> int:
         paths = write_report(result, out_dir)
         print(result.summary())
         print(f"Report written: {paths['json']} and {paths['html']}")
+        return 0
+
+    if args.command == "calibration":
+        import json
+        from pathlib import Path
+
+        from furlong.backtest.calibration import render, run_calibration
+
+        report = run_calibration(settings, features=args.features, bins=args.bins)
+        if not report["features"]:
+            print("No features could be binned: import some results first.",
+                  file=sys.stderr)
+            return 1
+        print(render(report))
+        out_dir = Path(args.out or (settings.data_dir / "reports"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "calibration.json"
+        path.write_text(json.dumps(report, indent=2, default=float))
+        print(f"\n  Full report: {path}")
         return 0
 
     if args.command == "daily":

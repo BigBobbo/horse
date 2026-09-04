@@ -169,7 +169,71 @@ four times worse than ignoring the model altogether. In production an alpha of
 96 means backing the model's top pick at any price. The search is now confined
 to non-negative weights from the start, with the market-only fit as a floor.
 
-## 5. Where this leaves the project
+## 5. Why there is no edge: the market is calibrated against every feature
+
+"The model does not beat the market" and "the market has already priced what
+the model knows" are different statements, and only the second tells you what
+to do next. `furlong calibration` answers it directly: sort runners into bins
+by each feature, and compare each bin's actual win rate with the mean
+probability the market assigned it.
+
+```
+Market calibration over 253,783 priced runners
+
+  feature                     sorts (pp)   worst gap   max |z|
+  recent_form                       11.0        0.15      0.79
+  career_place_rate                  9.1        0.23      1.23
+  last_finish_norm                   8.2        0.79      1.58
+  career_win_rate                    6.2        0.27      1.45
+  elo_rank_pct                       5.9        0.23      1.26
+  elo_vs_field                       5.9        0.52      3.06
+  elo                                5.1        0.29      1.80
+  days_since_run                     3.6        0.42      2.34
+
+  2 of 77 bins exceed |z| > 2; 3.5 expected by chance.
+```
+
+Recent form sorts win rate across **11 percentage points** — from 7.2% in the
+worst bin to 17.9% in the best. The market's implied probability tracks that
+to within **0.15 percentage points in every bin**. Elo, career strike rate and
+days since last run are the same story.
+
+The count at the bottom is the part to read twice. Across 77 bins, **two**
+exceed |z| > 2 where chance alone predicts 3.5. There is not merely no large
+mispricing; there are *fewer* apparent anomalies than noise would produce.
+
+This is the answer to "are the features too thin?" — they are not thin, they
+sort winners hard. They are **already in the price**.
+
+## 6. One experiment that failed, and why it is worth recording
+
+The obvious response to "half the features are constant" is to build new ones
+from what the archive does have: a horse's own past starting prices are a
+free, public record of its class, exactly what the missing official ratings
+would supply.
+
+It worked as a feature and failed as a design. The model's standalone
+McFadden R² rose from 0.0355 to **0.0584**, a 64% improvement, and the new
+`prior_log_bsp_vs_field` became the top feature by importance. Alpha stayed at
+exactly zero on real data — and on the synthetic world, which has a *known*
+planted inefficiency, delta R² fell from **+0.0055 to −0.0017**. The demo's
+edge disappeared.
+
+The reason is the two-stage design. The model got better at predicting winners
+by copying the market's own historical opinion, which is worth nothing once
+the market's *current* opinion is blended in at stage two — and the redundancy
+actively cost information the model had of its own. The feature builder's
+docstring states the rule this broke:
+
+> The market (odds) is deliberately NOT a feature here — market information
+> enters at the second-stage blend, per the Benter two-stage design.
+
+The change was reverted. It is recorded because "this made the model better
+and the system worse" is the least intuitive result here, and because the
+synthetic world with its planted edge is what caught it — a real-data run
+alone would have shown alpha at zero either way and taught nothing.
+
+## 7. Where this leaves the project
 
 The gate is the deliverable. A system that says "no" on 27,381 real races,
 when a professional model says no on the same races, is working — that is the
@@ -180,9 +244,15 @@ What it does **not** license is the conclusion that horse racing is
 unbeatable. The tested configuration is: no form data, closing prices, a
 thirty-two month window. Each of those is a reason the answer might change:
 
-1. **Form data.** The largest gap by far. Going, official ratings, trainer and
-   jockey records, draw and weight are what Benter's variables were made of.
-2. **Morning prices, not the close.** Where the edge is supposed to live.
+1. **Morning prices, not the close.** Now the most promising of the three, on
+   this evidence. Section 5 shows the *closing* price absorbing every feature
+   to within a fraction of a percentage point — but it is the closing price's
+   job to do that. The morning market is the one you would actually bet into,
+   and nothing here has tested it.
+2. **Form data.** Going, official ratings, trainer and jockey records, draw
+   and weight are what Benter's variables were made of. Section 6 is the
+   caution: new features have to carry information the market does not
+   already hold, not a better copy of what it does.
 3. **Longer history.** Thirty-two months is short for horse-level Elo to settle.
 
 The Racing API (~£25/month) plus the free BSP archives buys 1 and 2 together.

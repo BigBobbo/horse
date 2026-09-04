@@ -140,11 +140,12 @@ Every task lists **Validation criteria (VC)** — objective checks (automated te
 - **T4.3 Benter blend.** Stage-2 MLE of `p ∝ exp(α·log f + β·log q)` on validation (f = fundamental model, q = de-vigged exchange probs); fitted α, β persisted. Weights are constrained non-negative **inside** the optimisation, with the market-only fit as a floor.
   **VC:** blended test log-loss ≤ min(model-only, market-only) within tolerance; **ΔR² (McFadden vs market-only) > 0 on synthetic data** (the planted inefficiency must be found); with a deliberately useless model, β→dominates and blend ≈ market (sanity test); on a separable problem the shipped blend never fits worse than the market alone (regression: post-hoc clamping shipped α=96, β=0 with four times the market's log-loss).
 
-- **T4.4 The α = 0 gate.** Before anything is priced, a likelihood-ratio test of α = 0 on the blend window, against a **market-only null with β free** so that reshaping the market cannot pass as information. Above `FURLONG_BLEND_SIGNIFICANCE` (default p ≥ 0.05) the engine advises nothing, in the backtest and the daily run alike.
-  **VC:** pure noise and a monotone rescaling of the market both fail the test; a genuinely informative model passes; the same model on 25 races fails (thin evidence must fail closed); the daily run never calls the value engine when the test fails; the web card distinguishes "model knows nothing" from "no value today".
-  **Why:** on 27,381 real Betfair-priced UK and Irish races the unguarded engine advised 10,747 bets from folds whose α was zero — pure market flattening (`docs/REAL-DATA-FINDINGS.md`).
 - **T4.4 Evaluation & calibration report.** Log-loss, Brier, McFadden R², ΔR² vs market, reliability table (predicted vs actual by prob decile); `furlong train` emits metrics JSON + model artifact + model_runs row.
   **VC:** metrics JSON schema stable; reliability deciles monotone on synthetic test set (allowing noise); train command end-to-end test.
+
+- **T4.5 The α = 0 gate.** Before anything is priced, a likelihood-ratio test of α = 0 on the blend window, against a **market-only null with β free** so that reshaping the market cannot pass as information. Above `FURLONG_BLEND_SIGNIFICANCE` (default p ≥ 0.05) the engine advises nothing, in the backtest and the daily run alike.
+  **VC:** pure noise and a monotone rescaling of the market both fail the test; a genuinely informative model passes; the same model on 25 races fails (thin evidence must fail closed); the daily run never calls the value engine when the test fails; the web card distinguishes "model knows nothing" from "no value today".
+  **Why:** on 27,381 real Betfair-priced UK and Irish races the unguarded engine advised 10,747 bets from folds whose α was zero — pure market flattening (`docs/REAL-DATA-FINDINGS.md`).
 
 ### Epic 5 — Value & staking
 
@@ -168,6 +169,9 @@ Every task lists **Validation criteria (VC)** — objective checks (automated te
   **VC:** metrics recomputed independently from the bet log match report; **on synthetic data: value strategy ROI > 0 and > random-selection baseline; random backing at near-fair exchange odds ≈ −commission ± 2pp** (proves the harness doesn't hallucinate edge).
 
 ### Epic 7 — Daily pipeline
+
+- **T6.3 Market calibration diagnostic (`furlong calibration`).** Bin each feature and compare the bin's actual win rate against the market's mean implied probability, with the binomial standard error and a flag count read against the number of tests run. Answers what the alpha = 0 test cannot: weak features, or features the market has already priced.
+  **VC:** an efficient synthetic market shows a small gap however hard the feature sorts; a deliberately blind market is caught (gap > 3x, |z| > 5); features constant within a race are marked and ranked last, and excluded from the flag count, because binning by one groups whole races and a book sums to 1 by construction; constant and all-NaN features are skipped, not crashed.
 
 - **T7.1 `furlong daily`.** For date D: load cards + latest odds from configured source, features, model+blend, value engine, staking → suggestions persisted + emitted (terminal table, JSON, HTML) with advised price, **price floor** ("no value below X"), stake units, model prob vs market prob, and top-3 factor rationale; publish timestamp; explicit "no qualifying bets today" path.
   **VC:** end-to-end on synthetic "today": suggestions produced and persisted; every suggestion has price_floor > 1.0 and edge ≥ min_edge at advised odds; a no-racing date exits 0 with the message; JSON schema test.

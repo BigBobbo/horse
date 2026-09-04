@@ -138,6 +138,7 @@ significant on a small sample.
 | `furlong ingest-bsp <files>` | Ingest Betfair SP archives (free, GB+IRE from 2008) |
 | `furlong train` | Fit the model and the market blend |
 | `furlong backtest` | Walk-forward backtest, JSON + HTML report |
+| `furlong calibration` | Is the market already priced against our features? |
 | `furlong daily` | Publish today's suggestions (`--dry-run` to preview) |
 | `furlong rescore --date D` | Re-price after non-runners |
 | `furlong settle --date D` | Settle against results and BSP, compute CLV |
@@ -171,10 +172,22 @@ furlong train && furlong backtest
 **This has been run, and [`docs/REAL-DATA-FINDINGS.md`](docs/REAL-DATA-FINDINGS.md)
 is what it said.** In short: over 27,381 real races the model earned a blend
 weight of exactly zero and the engine advised nothing. So did Betfair's own
-published model on the same races — its alpha against BSP is also zero. The
-closing line is simply that hard, and the files carry no going, trainers,
-jockeys, ratings or finishing positions, so **14 of the 29 features are
-constant** on it.
+published model on the same races — its alpha against BSP is also zero.
+
+`furlong calibration` says why, and it is not that the features are weak:
+
+```
+  feature                     sorts (pp)   worst gap   max |z|
+  recent_form                       11.0        0.15      0.79
+  career_place_rate                  9.1        0.23      1.23
+  elo_vs_field                       5.9        0.52      3.06
+
+  2 of 77 bins exceed |z| > 2; 3.5 expected by chance.
+```
+
+Recent form sorts win rate across 11 percentage points, from 7.2% to 17.9% —
+and the closing price tracks it to within 0.15 of a point in every bin. The
+features sort winners hard. They are already in the price.
 
 The Kaggle UK+IRE dataset (1990–2020, CC BY-NC) is still worth importing
 alongside it: it is the only free source here with real form data. Its prices

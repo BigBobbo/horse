@@ -251,8 +251,11 @@ races produced — flattens the market's own prices, lifts every longshot past
 the edge filter, and advises five figures' worth of bets containing no model
 information whatsoever. Raising the threshold to force suggestions is
 choosing to bet on arithmetic. `furlong train` prints the test result; if the
-p-value is near 1.0, the model needs better features or more history, not a
-looser gate. See [`docs/REAL-DATA-FINDINGS.md`](REAL-DATA-FINDINGS.md).
+p-value is near 1.0, run `furlong calibration` before reaching for new
+features: it bins each feature and compares the actual win rate against the
+market's implied one, so it distinguishes "the features are weak" from "the
+market has already priced them". On the Betfair archive it is emphatically the
+second. See [`docs/REAL-DATA-FINDINGS.md`](REAL-DATA-FINDINGS.md).
 
 **Suggestions look too good** — an ROI above about 15% over a few hundred
 bets is almost always leakage or variance, not edge. Re-read the backtest

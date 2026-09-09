@@ -233,28 +233,102 @@ and the system worse" is the least intuitive result here, and because the
 synthetic world with its planted edge is what caught it — a real-data run
 alone would have shown alpha at zero either way and taught nothing.
 
-## 7. Where this leaves the project
+## 7. Two more places to look, both closed
+
+Sections 2-6 all concern one market: the Betfair win market at the close. Two
+obvious escapes remained, and both were free to test on data already
+imported. `furlong efficiency` runs them.
+
+### The place market (the Dr Z test)
+
+Hausch, Ziemba and Rubinstein's system — the best-documented profitable
+racing system before Benter — treated the win market as efficient, used it to
+price the place market, and bet the difference. Place pools are thinner and
+carry more casual money. The import brought in **253,054 place prices**
+alongside the win prices, so the test costs nothing.
+
+No Harville formula is assumed. Runners are binned by *win*-market
+probability and each bin's actual place rate is compared with the place
+market's own de-vigged probability:
+
+| places | bins | largest \|z\| | backing everything at place BSP |
+|---|---|---|---|
+| 2 | 10 | 0.98 | **+0.47%** ± 1.60 (1 SE) |
+| 3 | 10 | 2.76 | **−3.14%** ± 0.72 |
+| 4 | 10 | — | **−2.18%** ± 1.56 |
+
+One bin showed +9.8% — and its standard error is 14.1, so z = 0.70 on average
+odds of 49.65. The two bins that *are* significant are both negative: the
+favourite–longshot bias, running the wrong way to bet on. Whatever Dr Z found
+in the 1980s has been arbitraged away.
+
+### Segments
+
+Perhaps efficiency is not uniform: Irish racing is a thinner market inside a
+liquid one, jumps differ from flat, small fields from big. Backing every
+runner at BSP, by segment:
+
+| slice | best segment | return |
+|---|---|---|
+| country | IRE | −3.29% ± 3.29 |
+| code | NH | −2.34% ± 3.01 |
+| field size | ≤7 | −1.72% ± 1.78 |
+| odds band | 11–21 | −0.91% ± 1.65 |
+| country × odds band | IRE / 11–21 | **+1.31% ± 3.16** |
+
+The best segment found anywhere is Irish runners at 11–21, at +1.31% with a
+standard error of 3.16 — z = 0.41, which is nothing. Every other slice is
+negative. Across odds bands, where self-calibration is a real test, the
+market is accurate to within 0.6 of a percentage point.
+
+**A note on the calibration column.** It reads `n/a` for country, code and
+field size, and that is deliberate. Proportional de-vigging forces each
+race's book to sum to 1, so any slice made of *whole races* has a mean quoted
+probability equal to its win rate by construction — it would report perfect
+calibration on any market however wrong. Only slices that cut across a race,
+like an odds band, can say anything. The first version of this tool printed
+0.00 for all of them, which looked like the strongest result in the report
+and was an artefact; a test caught it.
+
+## 8. Where this leaves the project
 
 The gate is the deliverable. A system that says "no" on 27,381 real races,
 when a professional model says no on the same races, is working — that is the
 outcome `docs/OPERATIONS.md` describes as *close to definitive, and it cost
 nothing*.
 
-What it does **not** license is the conclusion that horse racing is
-unbeatable. The tested configuration is: no form data, closing prices, a
-thirty-two month window. Each of those is a reason the answer might change:
+Five independent things now say the same thing, and none of them is a
+modelling failure:
 
-1. **Morning prices, not the close.** Now the most promising of the three, on
-   this evidence. Section 5 shows the *closing* price absorbing every feature
-   to within a fraction of a percentage point — but it is the closing price's
-   job to do that. The morning market is the one you would actually bet into,
-   and nothing here has tested it.
-2. **Form data.** Going, official ratings, trainer and jockey records, draw
-   and weight are what Benter's variables were made of. Section 6 is the
-   caution: new features have to carry information the market does not
-   already hold, not a better copy of what it does.
-3. **Longer history.** Thirty-two months is short for horse-level Elo to settle.
+1. Our model earns α = 0 against Betfair SP.
+2. **Betfair's own published model earns α = 0 against it too.**
+3. Every feature we compute is priced to within a fraction of a percentage
+   point, with fewer anomalies than chance predicts.
+4. The place market — the classic soft one, with a profitable precedent —
+   is priced just as tightly.
+5. No segment of the market is beatable by backing at BSP: the best slice
+   found anywhere is +1.31% ± 3.16.
 
-The Racing API (~£25/month) plus the free BSP archives buys 1 and 2 together.
-Until then, the honest position is that this system has been shown to work as
-a piece of software and has found no edge to sell.
+**Only one avenue remains untested, and it is a real one.** Every number here
+is measured against Betfair SP, which is the *closing* price. Absorbing all
+public information is precisely the closing price's job, and it does it. The
+market you would actually bet into is the morning one, hours before the
+price has finished forming — and the research already documents that gap:
+one well-known tipster's advised average of 10.41 was 7.35 by the time
+followers got on. Prices move that far because morning prices are *not* the
+close.
+
+Nothing in this repository has tested the morning market, because the data to
+test it does not exist here: the Betfair files carry BSP only.
+
+Testing it honestly needs historical morning prices, and that is the thing to
+check before spending anything — a feed of *live* odds cannot backtest the
+question, only start a forward collection that takes months to answer it. The
+runner-up is form data (going, official ratings, trainer and jockey records),
+with section 6 as the standing caution: a new feature has to carry
+information the market does not already hold, not a better copy of what it
+does.
+
+Until one of those is in hand, the honest position is that this system has
+been shown to work as a piece of software, has been pointed at the market it
+was built for, and has found no edge to sell.

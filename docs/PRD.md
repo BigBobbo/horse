@@ -168,6 +168,9 @@ Every task lists **Validation criteria (VC)** — objective checks (automated te
 - **T6.2 Backtest metrics & report.** ROI, strike rate, turnover, max drawdown, longest losing run, CLV distribution, per-odds-band and per-country breakdowns; JSON + HTML report.
   **VC:** metrics recomputed independently from the bet log match report; **on synthetic data: value strategy ROI > 0 and > random-selection baseline; random backing at near-fair exchange odds ≈ −commission ± 2pp** (proves the harness doesn't hallucinate edge).
 
+- **T6.4 Market-efficiency sweep (`furlong efficiency`).** Model-free test of whether any slice of the market is beatable: return to backing every runner at BSP less commission by country, code, field size and odds band, each with its standard error, plus the place market binned against the win market (the Hausch–Ziemba–Rubinstein test, measured rather than assumed via Harville).
+  **VC:** a deliberately soft segment (prices 10% too long) is detected at z > 2 while the fair segment is not; segments below 3,000 runners are not reported; every return carries its standard error; slices made of whole races report no calibration figure, because proportional de-vigging forces those to agree whatever the prices — a regression, the first version printed 0.00 for all of them and it read as the report's strongest result.
+
 ### Epic 7 — Daily pipeline
 
 - **T6.3 Market calibration diagnostic (`furlong calibration`).** Bin each feature and compare the bin's actual win rate against the market's mean implied probability, with the binomial standard error and a flag count read against the number of tests run. Answers what the alpha = 0 test cannot: weak features, or features the market has already priced.

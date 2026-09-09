@@ -80,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--features", nargs="*", help="only these features")
     p.add_argument("--out", help="write the full JSON report here")
 
+    p = sub.add_parser("efficiency",
+                       help="Is any segment of the market beatable without a model?")
+    p.add_argument("--commission", type=float, default=None,
+                   help="exchange commission (default: configured value)")
+    p.add_argument("--out", help="write the full JSON report here")
+
     p = sub.add_parser("daily", help="Produce today's suggestions")
     p.add_argument("--date", help="ISO date (default: today's racing)")
     p.add_argument("--dry-run", action="store_true", help="compute but write nothing")
@@ -283,6 +289,26 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path(args.out or (settings.data_dir / "reports"))
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / "calibration.json"
+        path.write_text(json.dumps(report, indent=2, default=float))
+        print(f"\n  Full report: {path}")
+        return 0
+
+    if args.command == "efficiency":
+        import json
+        from pathlib import Path
+
+        from furlong.backtest.efficiency import render, run_efficiency
+
+        commission = (args.commission if args.commission is not None
+                      else settings.exchange_commission)
+        report = run_efficiency(settings, commission=commission)
+        if not report["runners"]:
+            print("No priced runners: import some results first.", file=sys.stderr)
+            return 1
+        print(render(report))
+        out_dir = Path(args.out or (settings.data_dir / "reports"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "efficiency.json"
         path.write_text(json.dumps(report, indent=2, default=float))
         print(f"\n  Full report: {path}")
         return 0

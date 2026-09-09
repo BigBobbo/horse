@@ -139,6 +139,7 @@ significant on a small sample.
 | `furlong train` | Fit the model and the market blend |
 | `furlong backtest` | Walk-forward backtest, JSON + HTML report |
 | `furlong calibration` | Is the market already priced against our features? |
+| `furlong efficiency` | Is any segment of the market beatable without a model? |
 | `furlong daily` | Publish today's suggestions (`--dry-run` to preview) |
 | `furlong rescore --date D` | Re-price after non-runners |
 | `furlong settle --date D` | Settle against results and BSP, compute CLV |
@@ -188,6 +189,12 @@ published model on the same races — its alpha against BSP is also zero.
 Recent form sorts win rate across 11 percentage points, from 7.2% to 17.9% —
 and the closing price tracks it to within 0.15 of a point in every bin. The
 features sort winners hard. They are already in the price.
+
+`furlong efficiency` closes the two obvious escapes. The place market — the
+one Hausch, Ziemba and Rubinstein beat in the 1980s — is priced just as
+tightly against the win market. And no segment is soft: across country, code,
+field size and odds band, the best slice found anywhere is Irish runners at
+11–21 returning **+1.31% ± 3.16**, which is nothing.
 
 The Kaggle UK+IRE dataset (1990–2020, CC BY-NC) is still worth importing
 alongside it: it is the only free source here with real form data. Its prices

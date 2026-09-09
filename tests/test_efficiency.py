@@ -166,3 +166,62 @@ def test_render_names_the_best_segment_found():
     text = render(report)
     assert "Best segment found" in text
     assert best_segment(report)["segment"] in ("GB", "IRE")
+
+
+# -- early price vs the close ----------------------------------------------
+
+def _seed_prices(settings, rows):
+    """Write runners with win/early/closing prices straight into the schema."""
+    from furlong.db import init_db
+
+    conn = init_db(settings.database_path)
+    conn.executescript("""
+        INSERT INTO courses (id,name,country) VALUES (1,'Curragh','IRE');
+        INSERT INTO races (id,source_id,course_id,date,start_time_utc,race_type,
+                           distance_m,going,status)
+        VALUES (1,'R1',1,'2026-01-01','2026-01-01T14:00:00+00:00','flat',1600,
+                'good','result');
+    """)
+    for i, (won, bsp, morning) in enumerate(rows, start=1):
+        conn.execute("INSERT INTO horses (id,name) VALUES (?,?)", (i, f"H{i}"))
+        conn.execute("""INSERT INTO runners (id,race_id,horse_id,status,win_flag)
+                        VALUES (?,1,?,'ran',?)""", (i, i, int(won)))
+        conn.execute("""INSERT INTO bsp_prices (runner_id,market,bsp,morning_wap)
+                        VALUES (?,'win',?,?)""", (i, bsp, morning))
+    conn.commit()
+    conn.close()
+
+
+def test_drift_reports_clv_of_an_early_price(settings):
+    """A price that was 5% bigger in the morning must read CLV 1.05."""
+    from furlong.backtest.efficiency import drift
+
+    rng = np.random.default_rng(3)
+    rows = [(rng.random() < 0.5, 2.0, 2.10) for _ in range(MIN_SEGMENT + 100)]
+    _seed_prices(settings, rows)
+
+    rows_out = drift(settings)
+    band = next(r for r in rows_out if r["band"] == "1-3")
+    assert band["morning WAP"]["clv"] == pytest.approx(1.05, abs=1e-6)
+    # Backing at the longer price must return more than backing at the close.
+    assert band["morning WAP"]["roi_pp"] > band["BSP"]["roi_pp"]
+
+
+def test_drift_is_empty_without_early_prices(settings):
+    """The Betfair hub files carry BSP alone; that must read as absence."""
+    from furlong.backtest.efficiency import drift
+
+    rng = np.random.default_rng(4)
+    _seed_prices(settings, [(rng.random() < 0.5, 2.0, None)
+                            for _ in range(MIN_SEGMENT + 100)])
+    rows = drift(settings)
+    assert rows, "the BSP column should still be reported"
+    assert "morning WAP" not in rows[0]
+
+
+def test_drift_on_an_empty_database(settings):
+    from furlong.backtest.efficiency import drift
+    from furlong.db import init_db
+
+    init_db(settings.database_path).close()
+    assert drift(settings) == []

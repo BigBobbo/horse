@@ -191,6 +191,67 @@ def place_efficiency(frame: pd.DataFrame, bins: int = 10,
     return rows
 
 
+# Earlier prices, best first, as stored by the Betfair SP archive ingester.
+# MORNINGWAP is a genuine morning price; PPWAP is volume-weighted over the
+# whole pre-off window and so sits much closer to the close.
+EARLY_PRICES = [("morning_wap", "morning WAP"), ("ppwap", "pre-off WAP")]
+
+
+def drift(settings: Settings, commission: float = COMMISSION_DEFAULT) -> list[dict]:
+    """Does the price move predictably between an early price and the close?
+
+    This is the one question the Betfair hub files cannot answer, because they
+    carry BSP alone. The free daily SP archives at promo.betfair.com do carry
+    earlier prices -- MORNINGWAP and PPWAP -- and ``furlong ingest-bsp`` already
+    stores them, so this runs as soon as those files are ingested.
+
+    For each odds band it reports closing line value (the early price divided
+    by BSP) alongside the return to actually backing at each price. Both are
+    needed, and they answer different questions: CLV says whether the early
+    price was better, the return says whether better was enough.
+
+    On 192,564 Australian and New Zealand runners the two answers diverged.
+    Favourites drifted from a pre-off average of 1.022 times BSP -- shortening
+    into the close, z = -47 -- while runners above 21.0 went the other way at
+    z = +166. Genuine, enormous, and worth almost exactly the commission: at
+    the pre-off price, favourites returned -0.34% +/- 1.20. A market can be
+    predictably wrong and still not pay.
+    """
+    conn = init_db(settings.database_path)
+    frame = pd.read_sql("""
+        SELECT r.win_flag, b.bsp, b.ppwap, b.morning_wap
+        FROM runners r JOIN bsp_prices b ON b.runner_id = r.id AND b.market = 'win'
+        WHERE r.status = 'ran' AND b.bsp > 1.0""", conn)
+    conn.close()
+    if frame.empty:
+        return []
+
+    frame["band"] = pd.cut(frame["bsp"], ODDS_EDGES, labels=ODDS_LABELS)
+    won = frame["win_flag"].fillna(0) == 1
+    rows = []
+    for band, group in frame.groupby("band", observed=True):
+        if len(group) < MIN_SEGMENT:
+            continue
+        entry = {"band": str(band), "n": len(group)}
+        for column, label in [("bsp", "BSP")] + EARLY_PRICES:
+            prices = pd.to_numeric(group[column], errors="coerce")
+            usable = prices.notna() & (prices > 1.0)
+            if usable.sum() < MIN_SEGMENT:
+                continue
+            price = prices[usable]
+            win = won.loc[price.index]
+            pl = np.where(win, (price - 1.0) * (1 - commission), -1.0)
+            entry[label] = {
+                "n": int(len(price)),
+                "roi_pp": float(pl.mean()) * 100,
+                "se_pp": float(pl.std(ddof=1) / np.sqrt(len(pl))) * 100,
+                # CLV: what the early price was worth against the close.
+                "clv": float((price / group.loc[price.index, "bsp"]).mean()),
+            }
+        rows.append(entry)
+    return rows
+
+
 def run_efficiency(settings: Settings,
                    commission: float = COMMISSION_DEFAULT) -> dict:
     frame = prepare(load(settings), commission=commission)
@@ -208,6 +269,7 @@ def run_efficiency(settings: Settings,
         "commission": commission,
         "sweeps": sweeps,
         "place": place_efficiency(frame, commission=commission),
+        "drift": drift(settings, commission=commission),
     }
 
 
@@ -246,6 +308,20 @@ def render(report: dict) -> str:
             f"({worst['places']} places, bin {worst['bin']}, "
             f"{worst['diff_pp']:+.2f}pp)",
         ]
+    for row in report.get("drift") or []:
+        if row is report["drift"][0]:
+            lines += ["", "  early price vs the close (CLV, and the return to "
+                      "backing at each)",
+                      f"    {'band':<10}{'n':>9}" +
+                      "".join(f"{label:>26}" for label in
+                              ["BSP"] + [name for _, name in EARLY_PRICES])]
+        cells = ""
+        for label in ["BSP"] + [name for _, name in EARLY_PRICES]:
+            cell = row.get(label)
+            cells += ("%25s " % "-") if not cell else (
+                f"{cell['roi_pp']:>10.2f}% CLV {cell['clv']:>6.3f} ")
+        lines.append(f"    {row['band']:<10}{row['n']:>9,}{cells}")
+
     best = best_segment(report)
     if best:
         lines += [

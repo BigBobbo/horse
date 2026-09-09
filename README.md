@@ -190,11 +190,19 @@ Recent form sorts win rate across 11 percentage points, from 7.2% to 17.9% —
 and the closing price tracks it to within 0.15 of a point in every bin. The
 features sort winners hard. They are already in the price.
 
-`furlong efficiency` closes the two obvious escapes. The place market — the
+`furlong efficiency` closes the two obvious escapes and probes the one that
+is still open. The place market — the
 one Hausch, Ziemba and Rubinstein beat in the 1980s — is priced just as
 tightly against the win market. And no segment is soft: across country, code,
 field size and odds band, the best slice found anywhere is Irish runners at
 11–21 returning **+1.31% ± 3.16**, which is nothing.
+
+The one thing that *is* true: the earlier market is not the close. On Betfair's
+Australian files, which carry a pre-off price the UK ones do not, favourites
+shorten into the off at z = −47 and outsiders drift at z = +166. Backing
+favourites early gives a CLV of **1.022** — and returns **−0.34% ± 1.20**,
+because a 2.2% edge against a 2% commission is a wash. Positive closing line
+value turns out to be necessary and not sufficient.
 
 The Kaggle UK+IRE dataset (1990–2020, CC BY-NC) is still worth importing
 alongside it: it is the only free source here with real form data. Its prices

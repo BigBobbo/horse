@@ -290,7 +290,72 @@ like an odds band, can say anything. The first version of this tool printed
 0.00 for all of them, which looked like the strongest result in the report
 and was an artefact; a test caught it.
 
-## 8. Where this leaves the project
+## 8. The one avenue that is not closed — and how far it goes
+
+Everything above is measured against Betfair SP, the *closing* price. The
+open question was always the market you would actually bet into, hours
+earlier. The UK/IRE hub files carry BSP alone, so they cannot answer it.
+
+Betfair's Australian and New Zealand files can. They carry
+`WIN_PREPLAY_WEIGHTED_AVERAGE_PRICE_TAKEN` alongside `WIN_BSP` — a real
+pre-off price and the close, for the same runners, on the same exchange.
+Wrong jurisdiction, right mechanism. Over 192,564 runners and 19,810 races
+from 2024 to 2026:
+
+| BSP band | n | CLV of the pre-off price | return at BSP | return pre-off |
+|---|---|---|---|---|
+| 1–3 | 9,574 | **1.022** | −2.51% ± 1.17 | **−0.34% ± 1.20** |
+| 3–6 | 29,979 | 1.010 | −0.01% ± 1.07 | +0.87% ± 1.08 |
+| 6–11 | 36,571 | 1.001 | −4.28% ± 1.38 | −4.07% ± 1.39 |
+| 11–21 | 39,842 | 0.992 | −1.15% ± 1.88 | −1.70% ± 1.88 |
+| 21+ | 76,598 | 0.947 | −1.36% ± 3.88 | −8.49% ± 3.23 |
+
+**The pre-off market is genuinely not the close.** Favourites shorten into
+the off and longshots drift, at z = −47 and z = +166 respectively. This is
+the first positive-direction finding in the whole investigation, and it is
+not marginal: it is one of the largest effects here.
+
+**And it is worth almost exactly the commission.** Backing every favourite at
+the pre-off price returns −0.34% ± 1.20 — indistinguishable from zero, and
+not positive. A CLV of 1.022 against a 2% commission is a wash. The market
+is predictably wrong and still does not pay.
+
+That is worth stating precisely, because it is the sharpest thing this
+project learned. **Positive closing line value is necessary and not
+sufficient.** The system was built to treat CLV as the headline metric on the
+grounds that it separates skill from luck in tens of bets rather than
+thousands — that reasoning stands. But a CLV of 1.02 obtained by backing
+every favourite is free to anyone and pays nobody. What has to beat
+commission is CLV *over and above* the generic drift, and that is what a
+model would have to supply — the same model that earns α = 0.
+
+### One trap worth naming
+
+`WIN_PREPLAY_MAX_PRICE_TAKEN` — the best price any backer got pre-off —
+returns **+39.6%** if you "back everything" at it. That is not an edge; it is
+hindsight selection of the best fill in every market. It is recorded here
+because a figure like that is exactly what a backtest looks like when it
+quietly assumes a price nobody could systematically take.
+
+### What would settle it
+
+The free daily archives at `promo.betfair.com/betfairsp/prices` carry
+**MORNINGWAP** for GB and Irish racing back to 2008 — a genuine morning
+price, far earlier than a pre-off volume-weighted average, and therefore a
+better test than the ANZ proxy above. `furlong ingest-bsp` already parses it
+and `furlong efficiency` already reports it; the host is geo-blocked from the
+machine this was developed on, so the files have to be fetched in a browser:
+
+```bash
+furlong ingest-bsp ~/Downloads/dwbfpricesukwin*.csv
+furlong efficiency          # the drift table fills in
+```
+
+If the morning drift for UK and Irish favourites is materially larger than
+the 2.2% seen in Australia, the question reopens. If it is the same size,
+this is finished.
+
+## 9. Where this leaves the project
 
 The gate is the deliverable. A system that says "no" on 27,381 real races,
 when a professional model says no on the same races, is working — that is the
@@ -309,26 +374,20 @@ modelling failure:
 5. No segment of the market is beatable by backing at BSP: the best slice
    found anywhere is +1.31% ± 3.16.
 
-**Only one avenue remains untested, and it is a real one.** Every number here
-is measured against Betfair SP, which is the *closing* price. Absorbing all
-public information is precisely the closing price's job, and it does it. The
-market you would actually bet into is the morning one, hours before the
-price has finished forming — and the research already documents that gap:
-one well-known tipster's advised average of 10.41 was 7.35 by the time
-followers got on. Prices move that far because morning prices are *not* the
-close.
+**The last avenue is now partly answered too.** Section 8 shows the earlier
+market really is softer than the close — but by about the size of the
+commission, which makes the generic drift free to everyone and profitable to
+nobody. The remaining question is narrow and specific: is the *morning* drift
+in GB and Irish racing materially bigger than the 2.2% measured in Australia?
+That takes one browser download and two commands, and it is the only thing
+left that could reopen this.
 
-Nothing in this repository has tested the morning market, because the data to
-test it does not exist here: the Betfair files carry BSP only.
-
-Testing it honestly needs historical morning prices, and that is the thing to
-check before spending anything — a feed of *live* odds cannot backtest the
-question, only start a forward collection that takes months to answer it. The
-runner-up is form data (going, official ratings, trainer and jockey records),
-with section 6 as the standing caution: a new feature has to carry
+The runner-up is form data — going, official ratings, trainer and jockey
+records — with section 6 as the standing caution: a new feature has to carry
 information the market does not already hold, not a better copy of what it
 does.
 
-Until one of those is in hand, the honest position is that this system has
-been shown to work as a piece of software, has been pointed at the market it
-was built for, and has found no edge to sell.
+The honest position is that this system has been shown to work as a piece of
+software, has been pointed at the market it was built for, and has found no
+edge to sell. That is a real answer to the question the project set out to
+ask, and it cost nothing but time.

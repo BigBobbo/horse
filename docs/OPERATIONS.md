@@ -103,6 +103,15 @@ furlong ingest-bsp --download-date 2026-08-28        # if reachable from your ne
 furlong ingest-bsp ~/Downloads/dwbfpricesirewin28082026.csv   # or ingest manually
 ```
 
+**These files carry more than BSP.** Each row has `MORNINGWAP` (a genuine
+morning weighted-average price), `PPWAP`, `PPMAX` and `PPMIN` — the only free
+source of *early* UK and Irish prices, and the only way to test whether the
+morning market is softer than the close. `furlong ingest-bsp` stores them and
+`furlong efficiency` reports the drift. On Australian data the equivalent
+drift was worth 2.2% to backers of favourites and cost 2% in commission; the
+open question is whether GB and Irish morning prices move further. See
+[`docs/REAL-DATA-FINDINGS.md`](REAL-DATA-FINDINGS.md) §8.
+
 Betfair geo-blocks `promo.betfair.com` in some regions — including, at the
 time of writing, the network this was developed on, which returns 403 for
 every file. If the download returns a non-200 the command says so and
